@@ -250,6 +250,9 @@ class InMemoryStore:
     def save_treasury_state(self) -> None:
         return None
 
+    def ping(self) -> bool:
+        return True
+
 
 class PersistentStore(InMemoryStore):
     def __init__(self, db_path: str) -> None:
@@ -592,6 +595,15 @@ class PersistentStore(InMemoryStore):
             state = self._deserialize(TreasuryState, state_rows[0]["data"])
             self.treasury_balance_bdc = state.balance_bdc
             self.treasury_config = state.config
+
+    def ping(self) -> bool:
+        try:
+            cursor = self._conn.cursor()
+            cursor.execute("SELECT 1")
+            cursor.fetchone()
+        except sqlite3.Error:
+            return False
+        return True
 
     def add_bot(self, bot: Bot) -> Bot:
         bot = super().add_bot(bot)
