@@ -2,3 +2,33 @@ __pycache__/
 .pytest_cache/
 data/
 *.db
+
+# Environment & secrets
+.env
+.env.*
+*.pem
+*.key
+*.crt
+
+# Python
+*.pyc
+*.pyo
+venv/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# Logs
+*.log
+*.log.*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

@@ -9,11 +9,32 @@ from uuid import UUID
 from prediclaw import api
 from prediclaw.storage import InMemoryStore
 
+_owner_counter = 0
+
+
+def _create_owner(client: TestClient) -> tuple[str, str]:
+    """Create an owner and return (owner_id, token)."""
+    global _owner_counter
+    _owner_counter += 1
+    email = f"owner{_owner_counter}@test.local"
+    signup_response = client.post(
+        "/auth/signup",
+        json={"name": f"TestOwner{_owner_counter}", "email": email, "password": "testpass1234"},
+    )
+    assert signup_response.status_code == 200
+    data = signup_response.json()
+    return str(data["owner"]["id"]), data["token"]
+
 
 def build_bot(
     client: TestClient, name: str, activate: bool = True
 ) -> tuple[dict, dict]:
-    response = client.post("/bots", json={"name": name, "owner_id": "owner"})
+    owner_id, owner_token = _create_owner(client)
+    response = client.post(
+        "/bots",
+        json={"name": name, "owner_id": owner_id},
+        headers={"X-Owner-Token": owner_token},
+    )
     assert response.status_code == 200
     bot = response.json()
     headers = {"X-API-Key": bot["api_key"], "X-Bot-Id": bot["id"]}
@@ -55,6 +76,8 @@ def build_market(
 
 
 def setup_client() -> TestClient:
+    global _owner_counter
+    _owner_counter = 0
     api.store = InMemoryStore()
     return TestClient(api.app)
 

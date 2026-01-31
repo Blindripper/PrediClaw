@@ -47,8 +47,8 @@ class Bot(BaseModel):
 
 
 class BotCreateRequest(BaseModel):
-    name: str
-    owner_id: str
+    name: str = Field(min_length=1, max_length=100)
+    owner_id: str = Field(min_length=1, max_length=200)
 
 
 class BotDepositRequest(BaseModel):
@@ -74,10 +74,10 @@ class BotPolicy(BaseModel):
 
 class MarketCreateRequest(BaseModel):
     creator_bot_id: UUID
-    title: str
-    description: str
-    category: str
-    outcomes: List[str] = Field(min_length=2)
+    title: str = Field(min_length=1, max_length=300)
+    description: str = Field(min_length=1, max_length=5000)
+    category: str = Field(min_length=1, max_length=100)
+    outcomes: List[str] = Field(min_length=2, max_length=20)
     closes_at: datetime
     resolver_policy: ResolverPolicy = ResolverPolicy.single
 
@@ -142,8 +142,8 @@ class OrderbookSnapshot(BaseModel):
 
 class DiscussionPostCreateRequest(BaseModel):
     bot_id: UUID
-    outcome_id: str
-    body: str
+    outcome_id: str = Field(min_length=1, max_length=200)
+    body: str = Field(min_length=1, max_length=10000)
     confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
 
 
@@ -172,9 +172,9 @@ class ResolutionVote(BaseModel):
 
 class EvidenceItem(BaseModel):
     id: UUID = Field(default_factory=uuid4)
-    source: str
-    description: str
-    url: Optional[str] = None
+    source: str = Field(min_length=1, max_length=500)
+    description: str = Field(min_length=1, max_length=5000)
+    url: Optional[str] = Field(default=None, max_length=2000)
     timestamp: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
 
 
@@ -263,7 +263,7 @@ class BotConfig(BaseModel):
 
 
 class WebhookRegistrationRequest(BaseModel):
-    url: str
+    url: str = Field(min_length=1, max_length=2000)
     event_types: List[EventType] = Field(default_factory=list)
 
 
@@ -299,9 +299,9 @@ class Owner(BaseModel):
 
 
 class OwnerCreateRequest(BaseModel):
-    name: str
-    email: str
-    password: str = Field(min_length=8)
+    name: str = Field(min_length=1, max_length=100)
+    email: str = Field(min_length=3, max_length=254)
+    password: str = Field(min_length=8, max_length=128)
 
 
 class OwnerLoginRequest(BaseModel):
@@ -341,18 +341,18 @@ class AgentProfile(BaseModel):
 
 
 class AgentProfileUpdateRequest(BaseModel):
-    display_name: Optional[str] = None
-    bio: Optional[str] = None
-    tags: Optional[List[str]] = None
-    avatar_url: Optional[str] = None
+    display_name: Optional[str] = Field(default=None, max_length=100)
+    bio: Optional[str] = Field(default=None, max_length=2000)
+    tags: Optional[List[str]] = Field(default=None, max_length=20)
+    avatar_url: Optional[str] = Field(default=None, max_length=2000)
 
 
 class SocialPostCreateRequest(BaseModel):
     author_bot_id: UUID
-    body: str
+    body: str = Field(min_length=1, max_length=10000)
     parent_id: Optional[UUID] = None
     market_id: Optional[UUID] = None
-    tags: List[str] = Field(default_factory=list)
+    tags: List[str] = Field(default_factory=list, max_length=20)
 
 
 class SocialPost(BaseModel):

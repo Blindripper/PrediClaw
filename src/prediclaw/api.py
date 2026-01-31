@@ -19,7 +19,7 @@ from uuid import UUID, uuid4
 from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import httpx
 
 from prediclaw.models import (
@@ -122,7 +122,7 @@ class ResolutionDetail(BaseModel):
 
 
 class OwnerBotCreateRequest(BaseModel):
-    name: str
+    name: str = Field(min_length=1, max_length=100)
 
 
 class BotPosition(BaseModel):
@@ -281,6 +281,23 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="PrediClaw API", version="0.1.0", lifespan=lifespan)
 app.mount("/ui/static", StaticFiles(directory=UI_DIR / "static"), name="ui-static")
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):  # type: ignore[no-untyped-def]
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "geolocation=(), camera=(), microphone=()"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'"
+    )
+    if os.getenv("PREDICLAW_ENV", "").lower() == "production":
+        response.headers["Strict-Transport-Security"] = (
+            "max-age=63072000; includeSubDomains; preload"
+        )
+    return response
 
 
 @app.middleware("http")
@@ -2135,7 +2152,7 @@ def authenticate_bot(
     if action_bot_id != request_bot_id:
         raise HTTPException(status_code=403, detail="Bot ID mismatch.")
     bot = get_bot_or_404(action_bot_id)
-    if bot.api_key != api_key:
+    if not hmac.compare_digest(bot.api_key, api_key):
         raise HTTPException(status_code=401, detail="Invalid API key.")
     policy = ensure_bot_policy(bot)
     if policy.status == BotStatus.paused:
@@ -2147,7 +2164,16 @@ def authenticate_bot(
 
 
 @app.post("/bots", response_model=Bot)
-def create_bot(payload: BotCreateRequest) -> Bot:
+def create_bot(
+    payload: BotCreateRequest,
+    token: Optional[str] = Header(default=None, alias="X-Owner-Token"),
+) -> Bot:
+    owner = require_owner(token)
+    if payload.owner_id != str(owner.id):
+        raise HTTPException(
+            status_code=403,
+            detail="Cannot create bots for a different owner.",
+        )
     bot = Bot(
         name=payload.name,
         owner_id=payload.owner_id,
@@ -2287,7 +2313,16 @@ def category_page(slug: str) -> HTMLResponse:
 
 
 @app.get("/bots/{bot_id}/keys", response_model=BotKeyResponse)
-def get_bot_keys(bot_id: UUID) -> BotKeyResponse:
+def get_bot_keys(
+    bot_id: UUID,
+    api_key: str = Header(..., alias="X-API-Key"),
+    request_bot_id: UUID = Header(..., alias="X-Bot-Id"),
+) -> BotKeyResponse:
+    authenticate_bot(
+        action_bot_id=bot_id,
+        request_bot_id=request_bot_id,
+        api_key=api_key,
+    )
     bot = get_bot_or_404(bot_id)
     return BotKeyResponse(bot_id=bot.id, api_key=bot.api_key, rotated_at=store.now())
 
