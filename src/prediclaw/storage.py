@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import defaultdict, deque
 from datetime import UTC, datetime
-from typing import Dict, List
+from typing import Deque, Dict, List
 from uuid import UUID
 
 from prediclaw.models import (
@@ -24,6 +24,7 @@ class InMemoryStore:
         self.discussions: Dict[UUID, List[DiscussionPost]] = defaultdict(list)
         self.resolutions: Dict[UUID, Resolution] = {}
         self.ledger: Dict[UUID, List[LedgerEntry]] = defaultdict(list)
+        self.bot_request_log: Dict[UUID, Deque[datetime]] = defaultdict(deque)
 
     def now(self) -> datetime:
         return datetime.now(tz=UTC)
@@ -59,3 +60,11 @@ class InMemoryStore:
         for market in self.markets.values():
             if market.status == MarketStatus.open and now >= market.closes_at:
                 market.status = MarketStatus.closed
+
+    def prune_bot_requests(self, bot_id: UUID, window_seconds: int) -> Deque[datetime]:
+        now = self.now()
+        cutoff = now.timestamp() - window_seconds
+        entries = self.bot_request_log[bot_id]
+        while entries and entries[0].timestamp() < cutoff:
+            entries.popleft()
+        return entries

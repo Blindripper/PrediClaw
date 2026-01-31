@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import secrets
 from datetime import datetime
 from typing import List
 from uuid import UUID
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
 from prediclaw.models import (
@@ -38,6 +39,10 @@ class ResolveResponse(BaseModel):
 
 store = InMemoryStore()
 app = FastAPI(title="PrediClaw API", version="0.1.0")
+MAX_BOT_REQUESTS_PER_MINUTE = 60
+RATE_LIMIT_WINDOW_SECONDS = 60
+MIN_BOT_BALANCE_BDC = 10.0
+MIN_BOT_REPUTATION_SCORE = 1.0
 
 
 def get_bot_or_404(bot_id: UUID) -> Bot:
@@ -54,9 +59,44 @@ def get_market_or_404(market_id: UUID) -> Market:
     return market
 
 
+def enforce_rate_limit(bot_id: UUID) -> None:
+    entries = store.prune_bot_requests(bot_id, RATE_LIMIT_WINDOW_SECONDS)
+    if len(entries) >= MAX_BOT_REQUESTS_PER_MINUTE:
+        raise HTTPException(status_code=429, detail="Rate limit exceeded.")
+    entries.append(store.now())
+
+
+def authenticate_bot(
+    *,
+    action_bot_id: UUID,
+    request_bot_id: UUID,
+    api_key: str,
+    require_min_stake: bool = False,
+) -> Bot:
+    if action_bot_id != request_bot_id:
+        raise HTTPException(status_code=403, detail="Bot ID mismatch.")
+    bot = get_bot_or_404(action_bot_id)
+    if bot.api_key != api_key:
+        raise HTTPException(status_code=401, detail="Invalid API key.")
+    enforce_rate_limit(bot.id)
+    if require_min_stake and (
+        bot.wallet_balance_bdc < MIN_BOT_BALANCE_BDC
+        and bot.reputation_score < MIN_BOT_REPUTATION_SCORE
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Insufficient balance or reputation for this action.",
+        )
+    return bot
+
+
 @app.post("/bots", response_model=Bot)
 def create_bot(payload: BotCreateRequest) -> Bot:
-    bot = Bot(name=payload.name, owner_id=payload.owner_id)
+    bot = Bot(
+        name=payload.name,
+        owner_id=payload.owner_id,
+        api_key=secrets.token_urlsafe(32),
+    )
     return store.add_bot(bot)
 
 
@@ -66,8 +106,17 @@ def list_bots() -> List[Bot]:
 
 
 @app.post("/bots/{bot_id}/deposit", response_model=Bot)
-def deposit_bdc(bot_id: UUID, payload: BotDepositRequest) -> Bot:
-    bot = get_bot_or_404(bot_id)
+def deposit_bdc(
+    bot_id: UUID,
+    payload: BotDepositRequest,
+    api_key: str = Header(..., alias="X-API-Key"),
+    request_bot_id: UUID = Header(..., alias="X-Bot-Id"),
+) -> Bot:
+    bot = authenticate_bot(
+        action_bot_id=bot_id,
+        request_bot_id=request_bot_id,
+        api_key=api_key,
+    )
     bot.wallet_balance_bdc += payload.amount_bdc
     store.add_ledger_entry(
         LedgerEntry(
@@ -81,8 +130,17 @@ def deposit_bdc(bot_id: UUID, payload: BotDepositRequest) -> Bot:
 
 
 @app.post("/markets", response_model=Market)
-def create_market(payload: MarketCreateRequest) -> Market:
-    creator = get_bot_or_404(payload.creator_bot_id)
+def create_market(
+    payload: MarketCreateRequest,
+    api_key: str = Header(..., alias="X-API-Key"),
+    request_bot_id: UUID = Header(..., alias="X-Bot-Id"),
+) -> Market:
+    creator = authenticate_bot(
+        action_bot_id=payload.creator_bot_id,
+        request_bot_id=request_bot_id,
+        api_key=api_key,
+        require_min_stake=True,
+    )
     market = Market(
         creator_bot_id=creator.id,
         title=payload.title,
@@ -109,12 +167,21 @@ def get_market(market_id: UUID) -> Market:
 
 
 @app.post("/markets/{market_id}/trades", response_model=TradeResponse)
-def create_trade(market_id: UUID, payload: TradeCreateRequest) -> TradeResponse:
+def create_trade(
+    market_id: UUID,
+    payload: TradeCreateRequest,
+    api_key: str = Header(..., alias="X-API-Key"),
+    request_bot_id: UUID = Header(..., alias="X-Bot-Id"),
+) -> TradeResponse:
     store.close_expired_markets()
     market = get_market_or_404(market_id)
     if market.status != MarketStatus.open:
         raise HTTPException(status_code=409, detail="Market is not open for trading.")
-    bot = get_bot_or_404(payload.bot_id)
+    bot = authenticate_bot(
+        action_bot_id=payload.bot_id,
+        request_bot_id=request_bot_id,
+        api_key=api_key,
+    )
     if payload.outcome_id not in market.outcomes:
         raise HTTPException(status_code=400, detail="Unknown outcome.")
     if bot.wallet_balance_bdc < payload.amount_bdc:
@@ -146,10 +213,17 @@ def create_trade(market_id: UUID, payload: TradeCreateRequest) -> TradeResponse:
 
 @app.post("/markets/{market_id}/discussion", response_model=DiscussionPost)
 def create_discussion_post(
-    market_id: UUID, payload: DiscussionPostCreateRequest
+    market_id: UUID,
+    payload: DiscussionPostCreateRequest,
+    api_key: str = Header(..., alias="X-API-Key"),
+    request_bot_id: UUID = Header(..., alias="X-Bot-Id"),
 ) -> DiscussionPost:
     market = get_market_or_404(market_id)
-    bot = get_bot_or_404(payload.bot_id)
+    bot = authenticate_bot(
+        action_bot_id=payload.bot_id,
+        request_bot_id=request_bot_id,
+        api_key=api_key,
+    )
     if payload.outcome_id not in market.outcomes:
         raise HTTPException(status_code=400, detail="Unknown outcome.")
     post = DiscussionPost(
@@ -170,13 +244,26 @@ def list_discussion_posts(market_id: UUID) -> List[DiscussionPost]:
 
 
 @app.post("/markets/{market_id}/resolve", response_model=ResolveResponse)
-def resolve_market(market_id: UUID, payload: ResolutionRequest) -> ResolveResponse:
+def resolve_market(
+    market_id: UUID,
+    payload: ResolutionRequest,
+    api_key: str = Header(..., alias="X-API-Key"),
+    request_bot_id: UUID = Header(..., alias="X-Bot-Id"),
+) -> ResolveResponse:
     store.close_expired_markets()
     market = get_market_or_404(market_id)
     if market.status == MarketStatus.resolved:
         raise HTTPException(status_code=409, detail="Market already resolved.")
     if payload.resolved_outcome_id not in market.outcomes:
         raise HTTPException(status_code=400, detail="Unknown outcome.")
+    if request_bot_id not in payload.resolver_bot_ids:
+        raise HTTPException(status_code=403, detail="Resolver not authorized.")
+    authenticate_bot(
+        action_bot_id=request_bot_id,
+        request_bot_id=request_bot_id,
+        api_key=api_key,
+        require_min_stake=True,
+    )
     for resolver_id in payload.resolver_bot_ids:
         get_bot_or_404(resolver_id)
 

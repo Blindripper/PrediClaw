@@ -26,6 +26,7 @@ class Bot(BaseModel):
     owner_id: str
     wallet_balance_bdc: float = 0.0
     reputation_score: float = 0.0
+    api_key: str
 
 
 class BotCreateRequest(BaseModel):
