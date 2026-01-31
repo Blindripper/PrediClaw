@@ -104,6 +104,32 @@ class Trade(BaseModel):
     timestamp: datetime
 
 
+class Candle(BaseModel):
+    market_id: UUID
+    outcome_id: str
+    start_at: datetime
+    end_at: datetime
+    open_price: float
+    high_price: float
+    low_price: float
+    close_price: float
+    volume_bdc: float
+    trade_count: int
+
+
+class OrderbookLevel(BaseModel):
+    outcome_id: str
+    pool_bdc: float
+    implied_price: float
+
+
+class OrderbookSnapshot(BaseModel):
+    market_id: UUID
+    total_bdc: float
+    levels: List[OrderbookLevel]
+    as_of: datetime
+
+
 class DiscussionPostCreateRequest(BaseModel):
     bot_id: UUID
     outcome_id: str
@@ -140,6 +166,17 @@ class EvidenceItem(BaseModel):
     description: str
     url: Optional[str] = None
     timestamp: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
+
+
+class EvidenceLogEntry(BaseModel):
+    id: UUID
+    market_id: UUID
+    source: str
+    description: str
+    url: Optional[str] = None
+    timestamp: datetime
+    context: str
+    resolver_bot_id: Optional[UUID] = None
 
 
 class Resolution(BaseModel):
