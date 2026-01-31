@@ -24,6 +24,9 @@ from prediclaw.models import (
     ResolutionRequest,
     ResolutionVote,
     ResolverPolicy,
+    TreasuryConfig,
+    TreasuryLedgerEntry,
+    TreasuryState,
     Trade,
     TradeCreateRequest,
     WebhookRegistration,
@@ -70,6 +73,21 @@ def enforce_rate_limit(bot_id: UUID) -> None:
     if len(entries) >= MAX_BOT_REQUESTS_PER_MINUTE:
         raise HTTPException(status_code=429, detail="Rate limit exceeded.")
     entries.append(store.now())
+
+
+def validate_treasury_config(config: TreasuryConfig) -> None:
+    if config.liquidity_bot_allocation_pct > 0 and not config.liquidity_bot_weights:
+        raise HTTPException(
+            status_code=400,
+            detail="Liquidity bot weights are required when allocation is enabled.",
+        )
+    for bot_id, weight in config.liquidity_bot_weights.items():
+        if weight <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Liquidity bot weights must be positive.",
+            )
+        get_bot_or_404(bot_id)
 
 
 def authenticate_bot(
@@ -452,6 +470,48 @@ def resolve_market(
             )
             store.add_ledger_entry(entry)
             payouts.append(entry)
+    total_payout_amount = sum(entry.delta_bdc for entry in payouts)
+    remainder = total_pool - total_payout_amount
+    if remainder > 0:
+        config = store.treasury_config
+        liquidity_distribution = 0.0
+        if (
+            config.liquidity_bot_allocation_pct > 0
+            and config.liquidity_bot_weights
+        ):
+            weight_sum = sum(config.liquidity_bot_weights.values())
+            if weight_sum > 0:
+                liquidity_distribution = (
+                    remainder * config.liquidity_bot_allocation_pct
+                )
+                for bot_id, weight in config.liquidity_bot_weights.items():
+                    if weight <= 0:
+                        continue
+                    amount = liquidity_distribution * (weight / weight_sum)
+                    if amount <= 0:
+                        continue
+                    bot = get_bot_or_404(bot_id)
+                    bot.wallet_balance_bdc += amount
+                    store.add_ledger_entry(
+                        LedgerEntry(
+                            bot_id=bot.id,
+                            market_id=market.id,
+                            delta_bdc=amount,
+                            reason="liquidity_distribution",
+                            timestamp=store.now(),
+                        )
+                    )
+        treasury_amount = remainder - liquidity_distribution
+        if config.send_unpaid_to_treasury and treasury_amount > 0:
+            store.treasury_balance_bdc += treasury_amount
+            store.add_treasury_entry(
+                TreasuryLedgerEntry(
+                    market_id=market.id,
+                    delta_bdc=treasury_amount,
+                    reason="resolution_remainder",
+                    timestamp=store.now(),
+                )
+            )
     return ResolveResponse(resolution=resolution, payouts=payouts, market=market)
 
 
@@ -491,3 +551,33 @@ def register_webhook(
 @app.get("/events/outbox", response_model=List[OutboxEntry])
 def list_outbox() -> List[OutboxEntry]:
     return store.outbox
+
+
+@app.get("/treasury", response_model=TreasuryState)
+def get_treasury_state() -> TreasuryState:
+    return TreasuryState(
+        balance_bdc=store.treasury_balance_bdc,
+        config=store.treasury_config,
+    )
+
+
+@app.get("/treasury/ledger", response_model=List[TreasuryLedgerEntry])
+def list_treasury_ledger() -> List[TreasuryLedgerEntry]:
+    return store.treasury_ledger
+
+
+@app.put("/treasury/config", response_model=TreasuryConfig)
+def update_treasury_config(
+    payload: TreasuryConfig,
+    api_key: str = Header(..., alias="X-API-Key"),
+    request_bot_id: UUID = Header(..., alias="X-Bot-Id"),
+) -> TreasuryConfig:
+    authenticate_bot(
+        action_bot_id=request_bot_id,
+        request_bot_id=request_bot_id,
+        api_key=api_key,
+        require_min_stake=True,
+    )
+    validate_treasury_config(payload)
+    store.treasury_config = payload
+    return store.treasury_config
