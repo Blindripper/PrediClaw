@@ -7,6 +7,8 @@ from uuid import UUID
 
 from prediclaw.models import (
     Bot,
+    BotConfig,
+    BotPolicy,
     DiscussionPost,
     Event,
     EventType,
@@ -26,6 +28,8 @@ from prediclaw.models import (
 class InMemoryStore:
     def __init__(self) -> None:
         self.bots: Dict[UUID, Bot] = {}
+        self.bot_policies: Dict[UUID, BotPolicy] = {}
+        self.bot_configs: Dict[UUID, BotConfig] = {}
         self.markets: Dict[UUID, Market] = {}
         self.trades: Dict[UUID, List[Trade]] = defaultdict(list)
         self.discussions: Dict[UUID, List[DiscussionPost]] = defaultdict(list)
@@ -45,6 +49,8 @@ class InMemoryStore:
 
     def add_bot(self, bot: Bot) -> Bot:
         self.bots[bot.id] = bot
+        self.bot_policies[bot.id] = BotPolicy(status=bot.status)
+        self.bot_configs[bot.id] = BotConfig()
         return bot
 
     def add_market(self, market: Market) -> Market:

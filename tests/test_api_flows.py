@@ -10,11 +10,26 @@ from prediclaw import api
 from prediclaw.storage import InMemoryStore
 
 
-def build_bot(client: TestClient, name: str) -> tuple[dict, dict]:
+def build_bot(
+    client: TestClient, name: str, activate: bool = True
+) -> tuple[dict, dict]:
     response = client.post("/bots", json={"name": name, "owner_id": "owner"})
     assert response.status_code == 200
     bot = response.json()
     headers = {"X-API-Key": bot["api_key"], "X-Bot-Id": bot["id"]}
+    if activate:
+        policy_response = client.put(
+            f"/bots/{bot['id']}/policy",
+            json={
+                "status": "active",
+                "max_requests_per_minute": api.MAX_BOT_REQUESTS_PER_MINUTE,
+                "max_active_markets": 5,
+                "max_trade_bdc": 500.0,
+                "notes": "test activation",
+            },
+            headers=headers,
+        )
+        assert policy_response.status_code == 200
     return bot, headers
 
 
@@ -140,3 +155,61 @@ def test_majority_policy_requires_multiple_resolvers() -> None:
             headers=headers,
         )
         assert response.status_code == 400
+
+
+def test_market_filters_liquidity_and_resolution_details() -> None:
+    with setup_client() as client:
+        bot, headers = build_bot(client, "alpha")
+        client.post(
+            f"/bots/{bot['id']}/deposit",
+            json={"amount_bdc": 40.0, "reason": "seed"},
+            headers=headers,
+        )
+        market = build_market(
+            client,
+            headers,
+            bot["id"],
+            datetime.now(timezone.utc) + timedelta(hours=2),
+        )
+        list_response = client.get("/markets", params={"status": "open"})
+        assert list_response.status_code == 200
+        assert any(item["id"] == market["id"] for item in list_response.json())
+
+        trade_response = client.post(
+            f"/markets/{market['id']}/trades",
+            json={"bot_id": bot["id"], "outcome_id": "YES", "amount_bdc": 10.0},
+            headers=headers,
+        )
+        assert trade_response.status_code == 200
+
+        liquidity_response = client.get(f"/markets/{market['id']}/liquidity")
+        assert liquidity_response.status_code == 200
+        assert liquidity_response.json()["total_bdc"] == 10.0
+
+        series_response = client.get(f"/markets/{market['id']}/price-series")
+        assert series_response.status_code == 200
+        assert series_response.json()
+
+        api.store.markets[UUID(market["id"])].closes_at = datetime.now(
+            timezone.utc
+        ) - timedelta(minutes=1)
+
+        resolve_response = client.post(
+            f"/markets/{market['id']}/resolve",
+            json={
+                "resolver_bot_ids": [bot["id"]],
+                "resolved_outcome_id": "YES",
+                "evidence": "oracle",
+            },
+            headers=headers,
+        )
+        assert resolve_response.status_code == 200
+
+        resolution_response = client.get(
+            f"/markets/{market['id']}/resolution"
+        )
+        assert resolution_response.status_code == 200
+        assert (
+            resolution_response.json()["resolution"]["resolved_outcome_id"]
+            == "YES"
+        )
