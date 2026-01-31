@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import os
 import secrets
-from typing import List
+from typing import List, Optional
 from uuid import UUID
 
 from fastapi import FastAPI, Header, HTTPException
@@ -52,6 +55,163 @@ MAX_BOT_REQUESTS_PER_MINUTE = 60
 RATE_LIMIT_WINDOW_SECONDS = 60
 MIN_BOT_BALANCE_BDC = 10.0
 MIN_BOT_REPUTATION_SCORE = 1.0
+MARKET_LIFECYCLE_POLL_SECONDS = int(
+    os.getenv("PREDICLAW_LIFECYCLE_POLL_SECONDS", "30")
+)
+AUTO_RESOLVE_ENABLED = os.getenv("PREDICLAW_AUTO_RESOLVE", "false").lower() in {
+    "1",
+    "true",
+    "yes",
+}
+
+
+def settle_market_resolution(
+    *,
+    market: Market,
+    resolved_outcome_id: str,
+    resolver_bot_ids: List[UUID],
+    actor_bot_id: UUID,
+    evidence: Optional[str] = None,
+    votes: Optional[List[ResolutionVote]] = None,
+) -> ResolveResponse:
+    market.status = MarketStatus.resolved
+    market.resolved_at = store.now()
+    resolution = Resolution(
+        market_id=market.id,
+        resolved_outcome_id=resolved_outcome_id,
+        resolver_bot_ids=resolver_bot_ids,
+        evidence=evidence,
+        timestamp=market.resolved_at,
+    )
+    store.add_resolution(resolution)
+    store.add_event(
+        Event(
+            event_type=EventType.market_resolved,
+            market_id=market.id,
+            bot_id=actor_bot_id,
+            payload={
+                "resolved_outcome_id": resolution.resolved_outcome_id,
+                "resolver_bot_ids": [
+                    str(resolver_id) for resolver_id in resolution.resolver_bot_ids
+                ],
+            },
+            timestamp=resolution.timestamp,
+        )
+    )
+    if votes:
+        store.add_resolution_votes(market.id, votes)
+
+    total_pool = sum(market.outcome_pools.values())
+    winning_pool = market.outcome_pools.get(resolved_outcome_id, 0.0)
+    payouts: List[LedgerEntry] = []
+    if winning_pool > 0:
+        for trade in store.trades.get(market.id, []):
+            if trade.outcome_id != resolved_outcome_id:
+                continue
+            share = trade.amount_bdc / winning_pool
+            payout_amount = share * total_pool
+            bot = get_bot_or_404(trade.bot_id)
+            bot.wallet_balance_bdc += payout_amount
+            entry = LedgerEntry(
+                bot_id=bot.id,
+                market_id=market.id,
+                delta_bdc=payout_amount,
+                reason="payout",
+                timestamp=store.now(),
+            )
+            store.add_ledger_entry(entry)
+            payouts.append(entry)
+    total_payout_amount = sum(entry.delta_bdc for entry in payouts)
+    remainder = total_pool - total_payout_amount
+    if remainder > 0:
+        config = store.treasury_config
+        liquidity_distribution = 0.0
+        if (
+            config.liquidity_bot_allocation_pct > 0
+            and config.liquidity_bot_weights
+        ):
+            weight_sum = sum(config.liquidity_bot_weights.values())
+            if weight_sum > 0:
+                liquidity_distribution = (
+                    remainder * config.liquidity_bot_allocation_pct
+                )
+                for bot_id, weight in config.liquidity_bot_weights.items():
+                    if weight <= 0:
+                        continue
+                    amount = liquidity_distribution * (weight / weight_sum)
+                    if amount <= 0:
+                        continue
+                    bot = get_bot_or_404(bot_id)
+                    bot.wallet_balance_bdc += amount
+                    store.add_ledger_entry(
+                        LedgerEntry(
+                            bot_id=bot.id,
+                            market_id=market.id,
+                            delta_bdc=amount,
+                            reason="liquidity_distribution",
+                            timestamp=store.now(),
+                        )
+                    )
+        treasury_amount = remainder - liquidity_distribution
+        if config.send_unpaid_to_treasury and treasury_amount > 0:
+            store.treasury_balance_bdc += treasury_amount
+            store.add_treasury_entry(
+                TreasuryLedgerEntry(
+                    market_id=market.id,
+                    delta_bdc=treasury_amount,
+                    reason="resolution_remainder",
+                    timestamp=store.now(),
+                )
+            )
+    return ResolveResponse(resolution=resolution, payouts=payouts, market=market)
+
+
+def select_auto_resolve_outcome(market: Market) -> str:
+    if not market.outcome_pools:
+        market.outcome_pools = {outcome: 0.0 for outcome in market.outcomes}
+    outcome_id, _ = max(
+        market.outcome_pools.items(), key=lambda item: (item[1], item[0])
+    )
+    return outcome_id
+
+
+def auto_resolve_markets() -> None:
+    for market in store.markets.values():
+        if market.status != MarketStatus.closed:
+            continue
+        if market.resolver_policy != ResolverPolicy.single:
+            continue
+        if market.id in store.resolutions:
+            continue
+        outcome_id = select_auto_resolve_outcome(market)
+        settle_market_resolution(
+            market=market,
+            resolved_outcome_id=outcome_id,
+            resolver_bot_ids=[market.creator_bot_id],
+            actor_bot_id=market.creator_bot_id,
+            evidence="auto_resolve",
+        )
+
+
+async def market_lifecycle_job() -> None:
+    while True:
+        store.close_expired_markets()
+        if AUTO_RESOLVE_ENABLED:
+            auto_resolve_markets()
+        await asyncio.sleep(MARKET_LIFECYCLE_POLL_SECONDS)
+
+
+@app.on_event("startup")
+async def start_market_lifecycle_job() -> None:
+    app.state.market_lifecycle_task = asyncio.create_task(market_lifecycle_job())
+
+
+@app.on_event("shutdown")
+async def stop_market_lifecycle_job() -> None:
+    task = app.state.market_lifecycle_task
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
 
 
 def get_bot_or_404(bot_id: UUID) -> Bot:
@@ -423,96 +583,14 @@ def resolve_market(
                 detail="Resolved outcome does not match resolver votes.",
             )
 
-    market.status = MarketStatus.resolved
-    market.resolved_at = store.now()
-    resolution = Resolution(
-        market_id=market.id,
+    return settle_market_resolution(
+        market=market,
         resolved_outcome_id=resolved_outcome_id,
         resolver_bot_ids=payload.resolver_bot_ids,
+        actor_bot_id=request_bot_id,
         evidence=payload.evidence,
-        timestamp=market.resolved_at,
+        votes=votes,
     )
-    store.add_resolution(resolution)
-    store.add_event(
-        Event(
-            event_type=EventType.market_resolved,
-            market_id=market.id,
-            bot_id=request_bot_id,
-            payload={
-                "resolved_outcome_id": resolution.resolved_outcome_id,
-                "resolver_bot_ids": [
-                    str(resolver_id) for resolver_id in resolution.resolver_bot_ids
-                ],
-            },
-            timestamp=resolution.timestamp,
-        )
-    )
-    if votes:
-        store.add_resolution_votes(market.id, votes)
-
-    total_pool = sum(market.outcome_pools.values())
-    winning_pool = market.outcome_pools.get(resolved_outcome_id, 0.0)
-    payouts: List[LedgerEntry] = []
-    if winning_pool > 0:
-        for trade in store.trades.get(market.id, []):
-            if trade.outcome_id != resolved_outcome_id:
-                continue
-            share = trade.amount_bdc / winning_pool
-            payout_amount = share * total_pool
-            bot = get_bot_or_404(trade.bot_id)
-            bot.wallet_balance_bdc += payout_amount
-            entry = LedgerEntry(
-                bot_id=bot.id,
-                market_id=market.id,
-                delta_bdc=payout_amount,
-                reason="payout",
-                timestamp=store.now(),
-            )
-            store.add_ledger_entry(entry)
-            payouts.append(entry)
-    total_payout_amount = sum(entry.delta_bdc for entry in payouts)
-    remainder = total_pool - total_payout_amount
-    if remainder > 0:
-        config = store.treasury_config
-        liquidity_distribution = 0.0
-        if (
-            config.liquidity_bot_allocation_pct > 0
-            and config.liquidity_bot_weights
-        ):
-            weight_sum = sum(config.liquidity_bot_weights.values())
-            if weight_sum > 0:
-                liquidity_distribution = (
-                    remainder * config.liquidity_bot_allocation_pct
-                )
-                for bot_id, weight in config.liquidity_bot_weights.items():
-                    if weight <= 0:
-                        continue
-                    amount = liquidity_distribution * (weight / weight_sum)
-                    if amount <= 0:
-                        continue
-                    bot = get_bot_or_404(bot_id)
-                    bot.wallet_balance_bdc += amount
-                    store.add_ledger_entry(
-                        LedgerEntry(
-                            bot_id=bot.id,
-                            market_id=market.id,
-                            delta_bdc=amount,
-                            reason="liquidity_distribution",
-                            timestamp=store.now(),
-                        )
-                    )
-        treasury_amount = remainder - liquidity_distribution
-        if config.send_unpaid_to_treasury and treasury_amount > 0:
-            store.treasury_balance_bdc += treasury_amount
-            store.add_treasury_entry(
-                TreasuryLedgerEntry(
-                    market_id=market.id,
-                    delta_bdc=treasury_amount,
-                    reason="resolution_remainder",
-                    timestamp=store.now(),
-                )
-            )
-    return ResolveResponse(resolution=resolution, payouts=payouts, market=market)
 
 
 @app.get("/bots/{bot_id}/ledger", response_model=List[LedgerEntry])
