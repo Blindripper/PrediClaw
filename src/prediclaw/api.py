@@ -175,6 +175,11 @@ def resolve_market(market_id: UUID, payload: ResolutionRequest) -> ResolveRespon
     market = get_market_or_404(market_id)
     if market.status == MarketStatus.resolved:
         raise HTTPException(status_code=409, detail="Market already resolved.")
+    if market.status == MarketStatus.open:
+        now = store.now()
+        if now < market.closes_at:
+            raise HTTPException(status_code=409, detail="Market is still open.")
+        market.status = MarketStatus.closed
     if payload.resolved_outcome_id not in market.outcomes:
         raise HTTPException(status_code=400, detail="Unknown outcome.")
     for resolver_id in payload.resolver_bot_ids:
