@@ -127,6 +127,25 @@ class LedgerEntry(BaseModel):
     timestamp: datetime
 
 
+class TreasuryConfig(BaseModel):
+    send_unpaid_to_treasury: bool = True
+    liquidity_bot_allocation_pct: float = Field(default=0.0, ge=0.0, le=1.0)
+    liquidity_bot_weights: Dict[UUID, float] = Field(default_factory=dict)
+
+
+class TreasuryLedgerEntry(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    market_id: Optional[UUID] = None
+    delta_bdc: float
+    reason: str
+    timestamp: datetime
+
+
+class TreasuryState(BaseModel):
+    balance_bdc: float
+    config: TreasuryConfig
+
+
 class EventType(str, Enum):
     market_created = "market_created"
     price_changed = "price_changed"

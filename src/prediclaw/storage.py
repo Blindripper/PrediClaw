@@ -16,6 +16,8 @@ from prediclaw.models import (
     OutboxEntry,
     Resolution,
     ResolutionVote,
+    TreasuryConfig,
+    TreasuryLedgerEntry,
     Trade,
     WebhookRegistration,
 )
@@ -30,10 +32,13 @@ class InMemoryStore:
         self.resolutions: Dict[UUID, Resolution] = {}
         self.resolution_votes: Dict[UUID, List[ResolutionVote]] = defaultdict(list)
         self.ledger: Dict[UUID, List[LedgerEntry]] = defaultdict(list)
+        self.treasury_ledger: List[TreasuryLedgerEntry] = []
         self.bot_request_log: Dict[UUID, Deque[datetime]] = defaultdict(deque)
         self.webhooks: Dict[UUID, List[WebhookRegistration]] = defaultdict(list)
         self.events: List[Event] = []
         self.outbox: List[OutboxEntry] = []
+        self.treasury_balance_bdc: float = 0.0
+        self.treasury_config = TreasuryConfig()
 
     def now(self) -> datetime:
         return datetime.now(tz=UTC)
@@ -68,6 +73,12 @@ class InMemoryStore:
 
     def add_ledger_entry(self, entry: LedgerEntry) -> LedgerEntry:
         self.ledger[entry.bot_id].append(entry)
+        return entry
+
+    def add_treasury_entry(
+        self, entry: TreasuryLedgerEntry
+    ) -> TreasuryLedgerEntry:
+        self.treasury_ledger.append(entry)
         return entry
 
     def add_webhook(self, webhook: WebhookRegistration) -> WebhookRegistration:
