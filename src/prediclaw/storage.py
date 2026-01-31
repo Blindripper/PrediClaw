@@ -8,6 +8,7 @@ from typing import Any, Deque, Dict, Iterable, List
 from uuid import UUID
 
 from prediclaw.models import (
+    Alert,
     Bot,
     BotConfig,
     BotPolicy,
@@ -27,6 +28,12 @@ from prediclaw.models import (
     WebhookRegistration,
 )
 
+ACTION_WINDOW_SECONDS = 86_400
+
+
+def _action_log_factory() -> Dict[str, Deque[datetime]]:
+    return defaultdict(deque)
+
 
 class InMemoryStore:
     def __init__(self) -> None:
@@ -44,8 +51,12 @@ class InMemoryStore:
         self.webhooks: Dict[UUID, List[WebhookRegistration]] = defaultdict(list)
         self.events: List[Event] = []
         self.outbox: List[OutboxEntry] = []
+        self.alerts: List[Alert] = []
         self.treasury_balance_bdc: float = 0.0
         self.treasury_config = TreasuryConfig()
+        self.bot_action_log: Dict[UUID, Dict[str, Deque[datetime]]] = defaultdict(
+            _action_log_factory
+        )
 
     def now(self) -> datetime:
         return datetime.now(tz=UTC)
@@ -124,6 +135,10 @@ class InMemoryStore:
                 )
         return event
 
+    def add_alert(self, alert: Alert) -> Alert:
+        self.alerts.append(alert)
+        return alert
+
     def save_outbox_entry(self, entry: OutboxEntry) -> None:
         self.outbox.append(entry)
 
@@ -147,6 +162,16 @@ class InMemoryStore:
         now = self.now()
         cutoff = now.timestamp() - window_seconds
         entries = self.bot_request_log[bot_id]
+        while entries and entries[0].timestamp() < cutoff:
+            entries.popleft()
+        return entries
+
+    def prune_bot_actions(
+        self, bot_id: UUID, action: str, window_seconds: int = ACTION_WINDOW_SECONDS
+    ) -> Deque[datetime]:
+        now = self.now()
+        cutoff = now.timestamp() - window_seconds
+        entries = self.bot_action_log[bot_id][action]
         while entries and entries[0].timestamp() < cutoff:
             entries.popleft()
         return entries
@@ -283,6 +308,14 @@ class PersistentStore(InMemoryStore):
             )
             """
         )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS alerts (
+                id TEXT PRIMARY KEY,
+                data TEXT NOT NULL
+            )
+            """
+        )
         self._conn.commit()
 
     def _serialize(self, model: Any) -> str:
@@ -362,6 +395,9 @@ class PersistentStore(InMemoryStore):
         for row in self._load_rows("outbox"):
             entry = self._deserialize(OutboxEntry, row["data"])
             self.outbox.append(entry)
+        for row in self._load_rows("alerts"):
+            alert = self._deserialize(Alert, row["data"])
+            self.alerts.append(alert)
         state_rows = self._load_rows("treasury_state")
         if state_rows:
             state = self._deserialize(TreasuryState, state_rows[0]["data"])
@@ -476,6 +512,11 @@ class PersistentStore(InMemoryStore):
         for entry in self.outbox:
             self._upsert("outbox", str(entry.id), self._serialize(entry))
         return event
+
+    def add_alert(self, alert: Alert) -> Alert:
+        alert = super().add_alert(alert)
+        self._upsert("alerts", str(alert.id), self._serialize(alert))
+        return alert
 
     def save_outbox_entry(self, entry: OutboxEntry) -> None:
         super().save_outbox_entry(entry)

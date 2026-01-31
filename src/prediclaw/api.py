@@ -14,6 +14,9 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from prediclaw.models import (
+    Alert,
+    AlertSeverity,
+    AlertType,
     Bot,
     BotConfig,
     BotCreateRequest,
@@ -46,7 +49,7 @@ from prediclaw.models import (
     WebhookRegistration,
     WebhookRegistrationRequest,
 )
-from prediclaw.storage import InMemoryStore, PersistentStore
+from prediclaw.storage import ACTION_WINDOW_SECONDS, InMemoryStore, PersistentStore
 
 
 class TradeResponse(BaseModel):
@@ -2154,12 +2157,149 @@ def ensure_bot_policy(bot: Bot) -> BotPolicy:
     return policy
 
 
+def record_alert(
+    *,
+    alert_type: AlertType,
+    severity: AlertSeverity,
+    message: str,
+    bot_id: Optional[UUID] = None,
+    context: Optional[dict[str, object]] = None,
+) -> Alert:
+    alert = Alert(
+        bot_id=bot_id,
+        alert_type=alert_type,
+        severity=severity,
+        message=message,
+        context=context or {},
+        timestamp=store.now(),
+    )
+    store.add_alert(alert)
+    store.add_event(
+        Event(
+            event_type=EventType.alert_triggered,
+            bot_id=bot_id,
+            payload={
+                "alert_type": alert.alert_type,
+                "severity": alert.severity,
+                "message": alert.message,
+                "context": alert.context,
+            },
+            timestamp=alert.timestamp,
+        )
+    )
+    return alert
+
+
 def enforce_rate_limit(bot: Bot) -> None:
     policy = ensure_bot_policy(bot)
     entries = store.prune_bot_requests(bot.id, RATE_LIMIT_WINDOW_SECONDS)
     if len(entries) >= policy.max_requests_per_minute:
+        record_alert(
+            alert_type=AlertType.rate_limit,
+            severity=AlertSeverity.warning,
+            message="Rate limit exceeded.",
+            bot_id=bot.id,
+            context={
+                "max_requests_per_minute": policy.max_requests_per_minute,
+                "window_seconds": RATE_LIMIT_WINDOW_SECONDS,
+            },
+        )
         raise HTTPException(status_code=429, detail="Rate limit exceeded.")
     entries.append(store.now())
+
+
+def enforce_action_quota(bot: Bot, *, action: str, max_per_day: int) -> None:
+    if max_per_day <= 0:
+        return
+    entries = store.prune_bot_actions(bot.id, action, ACTION_WINDOW_SECONDS)
+    if len(entries) >= max_per_day:
+        record_alert(
+            alert_type=AlertType.quota_exceeded,
+            severity=AlertSeverity.warning,
+            message="Daily quota exceeded.",
+            bot_id=bot.id,
+            context={
+                "action": action,
+                "max_per_day": max_per_day,
+            },
+        )
+        raise HTTPException(
+            status_code=429, detail="Daily quota exceeded for this action."
+        )
+
+
+def record_action(bot: Bot, *, action: str) -> None:
+    entries = store.prune_bot_actions(bot.id, action, ACTION_WINDOW_SECONDS)
+    entries.append(store.now())
+
+
+def enforce_stake_requirements(
+    bot: Bot,
+    *,
+    min_balance_bdc: float,
+    min_reputation_score: float,
+    action: str,
+) -> None:
+    if (
+        bot.wallet_balance_bdc < min_balance_bdc
+        and bot.reputation_score < min_reputation_score
+    ):
+        record_alert(
+            alert_type=AlertType.stake_requirement,
+            severity=AlertSeverity.warning,
+            message="Insufficient balance or reputation for action.",
+            bot_id=bot.id,
+            context={
+                "action": action,
+                "min_balance_bdc": min_balance_bdc,
+                "min_reputation_score": min_reputation_score,
+            },
+        )
+        raise HTTPException(
+            status_code=403,
+            detail="Insufficient balance or reputation for this action.",
+        )
+
+
+def apply_stake(
+    *,
+    bot: Bot,
+    amount_bdc: float,
+    reason: str,
+    market_id: Optional[UUID] = None,
+) -> None:
+    if amount_bdc <= 0:
+        return
+    if bot.wallet_balance_bdc < amount_bdc:
+        record_alert(
+            alert_type=AlertType.stake_requirement,
+            severity=AlertSeverity.warning,
+            message="Insufficient balance for stake requirement.",
+            bot_id=bot.id,
+            context={"required_bdc": amount_bdc, "reason": reason},
+        )
+        raise HTTPException(status_code=403, detail="Insufficient balance for stake.")
+    bot.wallet_balance_bdc -= amount_bdc
+    store.save_bot(bot)
+    store.add_ledger_entry(
+        LedgerEntry(
+            bot_id=bot.id,
+            market_id=market_id,
+            delta_bdc=-amount_bdc,
+            reason=reason,
+            timestamp=store.now(),
+        )
+    )
+    store.treasury_balance_bdc += amount_bdc
+    store.save_treasury_state()
+    store.add_treasury_entry(
+        TreasuryLedgerEntry(
+            market_id=market_id,
+            delta_bdc=amount_bdc,
+            reason=reason,
+            timestamp=store.now(),
+        )
+    )
 
 
 def validate_treasury_config(config: TreasuryConfig) -> None:
@@ -2191,7 +2331,6 @@ def authenticate_bot(
     action_bot_id: UUID,
     request_bot_id: UUID,
     api_key: str,
-    require_min_stake: bool = False,
     require_active: bool = False,
 ) -> Bot:
     if action_bot_id != request_bot_id:
@@ -2205,14 +2344,6 @@ def authenticate_bot(
     if require_active and policy.status != BotStatus.active:
         raise HTTPException(status_code=403, detail="Bot is not active.")
     enforce_rate_limit(bot)
-    if require_min_stake and (
-        bot.wallet_balance_bdc < MIN_BOT_BALANCE_BDC
-        and bot.reputation_score < MIN_BOT_REPUTATION_SCORE
-    ):
-        raise HTTPException(
-            status_code=403,
-            detail="Insufficient balance or reputation for this action.",
-        )
     return bot
 
 
@@ -2407,6 +2538,19 @@ def list_events(
     return events
 
 
+@app.get("/alerts", response_model=List[Alert])
+def list_alerts(bot_id: Optional[UUID] = Query(default=None)) -> List[Alert]:
+    if bot_id:
+        return [alert for alert in store.alerts if alert.bot_id == bot_id]
+    return store.alerts
+
+
+@app.get("/bots/{bot_id}/alerts", response_model=List[Alert])
+def list_bot_alerts(bot_id: UUID) -> List[Alert]:
+    get_bot_or_404(bot_id)
+    return [alert for alert in store.alerts if alert.bot_id == bot_id]
+
+
 @app.post("/markets", response_model=Market)
 def create_market(
     payload: MarketCreateRequest,
@@ -2417,15 +2561,28 @@ def create_market(
         action_bot_id=payload.creator_bot_id,
         request_bot_id=request_bot_id,
         api_key=api_key,
-        require_min_stake=True,
         require_active=True,
     )
     policy = ensure_bot_policy(creator)
+    enforce_stake_requirements(
+        creator,
+        min_balance_bdc=policy.min_balance_bdc_for_market,
+        min_reputation_score=policy.min_reputation_score_for_market,
+        action="market_create",
+    )
+    enforce_action_quota(
+        creator, action="market_create", max_per_day=policy.max_markets_per_day
+    )
     open_markets = count_open_markets(creator.id)
     if policy.max_active_markets and open_markets >= policy.max_active_markets:
         raise HTTPException(
             status_code=403, detail="Bot has reached the active market limit."
         )
+    apply_stake(
+        bot=creator,
+        amount_bdc=policy.stake_bdc_market,
+        reason="market_stake",
+    )
     market = Market(
         creator_bot_id=creator.id,
         title=payload.title,
@@ -2435,6 +2592,7 @@ def create_market(
         created_at=store.now(),
         closes_at=payload.closes_at,
         resolver_policy=payload.resolver_policy,
+        stake_bdc=policy.stake_bdc_market,
     )
     market = store.add_market(market)
     store.add_event(
@@ -2446,6 +2604,7 @@ def create_market(
             timestamp=market.created_at,
         )
     )
+    record_action(creator, action="market_create")
     return market
 
 
@@ -2624,12 +2783,21 @@ def resolve_market(
         raise HTTPException(status_code=400, detail="At least one resolver is required.")
     if request_bot_id not in payload.resolver_bot_ids:
         raise HTTPException(status_code=403, detail="Resolver not authorized.")
-    authenticate_bot(
+    actor_bot = authenticate_bot(
         action_bot_id=request_bot_id,
         request_bot_id=request_bot_id,
         api_key=api_key,
-        require_min_stake=True,
         require_active=True,
+    )
+    policy = ensure_bot_policy(actor_bot)
+    enforce_stake_requirements(
+        actor_bot,
+        min_balance_bdc=policy.min_balance_bdc_for_resolution,
+        min_reputation_score=policy.min_reputation_score_for_resolution,
+        action="resolve_market",
+    )
+    enforce_action_quota(
+        actor_bot, action="resolve_market", max_per_day=policy.max_resolutions_per_day
     )
 
     resolver_bots = {
@@ -2718,16 +2886,22 @@ def resolve_market(
                 raise HTTPException(
                     status_code=409, detail="No consensus reached."
                 )
-        if (
-            payload.resolved_outcome_id
-            and payload.resolved_outcome_id != resolved_outcome_id
-        ):
-            raise HTTPException(
-                status_code=400,
-                detail="Resolved outcome does not match resolver votes.",
-            )
+    if (
+        payload.resolved_outcome_id
+        and payload.resolved_outcome_id != resolved_outcome_id
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Resolved outcome does not match resolver votes.",
+        )
 
-    return settle_market_resolution(
+    apply_stake(
+        bot=actor_bot,
+        amount_bdc=policy.stake_bdc_resolution,
+        reason="resolution_stake",
+        market_id=market.id,
+    )
+    response = settle_market_resolution(
         market=market,
         resolved_outcome_id=resolved_outcome_id,
         resolver_bot_ids=payload.resolver_bot_ids,
@@ -2735,6 +2909,8 @@ def resolve_market(
         evidence=payload.evidence,
         votes=votes,
     )
+    record_action(actor_bot, action="resolve_market")
+    return response
 
 
 @app.get("/bots/{bot_id}/ledger", response_model=List[LedgerEntry])
@@ -2867,11 +3043,16 @@ def update_treasury_config(
     api_key: str = Header(..., alias="X-API-Key"),
     request_bot_id: UUID = Header(..., alias="X-Bot-Id"),
 ) -> TreasuryConfig:
-    authenticate_bot(
+    bot = authenticate_bot(
         action_bot_id=request_bot_id,
         request_bot_id=request_bot_id,
         api_key=api_key,
-        require_min_stake=True,
+    )
+    enforce_stake_requirements(
+        bot,
+        min_balance_bdc=MIN_BOT_BALANCE_BDC,
+        min_reputation_score=MIN_BOT_REPUTATION_SCORE,
+        action="treasury_config",
     )
     validate_treasury_config(payload)
     store.treasury_config = payload
