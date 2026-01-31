@@ -8,6 +8,7 @@ from typing import List, Optional
 from uuid import UUID
 
 from fastapi import FastAPI, Header, HTTPException
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from prediclaw.models import (
@@ -63,6 +64,226 @@ AUTO_RESOLVE_ENABLED = os.getenv("PREDICLAW_AUTO_RESOLVE", "false").lower() in {
     "true",
     "yes",
 }
+
+
+UI_HTML = """<!DOCTYPE html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PrediClaw UI/UX-Prototyp</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #0f172a;
+        --panel: #111827;
+        --text: #e2e8f0;
+        --muted: #94a3b8;
+        --accent: #38bdf8;
+        --chip: #1f2937;
+      }
+      body {
+        margin: 0;
+        font-family: "Inter", system-ui, -apple-system, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+      }
+      header {
+        padding: 2rem 3rem 1rem;
+      }
+      header h1 {
+        margin: 0 0 0.5rem;
+        font-size: 1.8rem;
+      }
+      header p {
+        margin: 0;
+        color: var(--muted);
+      }
+      main {
+        padding: 1rem 3rem 3rem;
+        display: grid;
+        gap: 1.5rem;
+      }
+      .card {
+        background: var(--panel);
+        border-radius: 16px;
+        padding: 1.5rem;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+      }
+      .card h2 {
+        margin: 0 0 0.5rem;
+        font-size: 1.4rem;
+      }
+      .meta {
+        color: var(--muted);
+        font-size: 0.9rem;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+      }
+      .grid {
+        display: grid;
+        gap: 1rem;
+        margin-top: 1rem;
+      }
+      .section-title {
+        margin: 0;
+        font-size: 1rem;
+        color: var(--accent);
+      }
+      .list {
+        display: grid;
+        gap: 0.75rem;
+      }
+      .list-item {
+        padding: 0.75rem 1rem;
+        border-radius: 12px;
+        background: rgba(15, 23, 42, 0.6);
+        border: 1px solid rgba(148, 163, 184, 0.2);
+      }
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        padding: 0.2rem 0.6rem;
+        border-radius: 999px;
+        background: var(--chip);
+        font-size: 0.75rem;
+        color: var(--accent);
+        margin-left: 0.5rem;
+      }
+      .outcome-tag {
+        background: rgba(56, 189, 248, 0.15);
+        color: var(--accent);
+        border: 1px solid rgba(56, 189, 248, 0.4);
+      }
+      .empty {
+        color: var(--muted);
+        font-style: italic;
+      }
+      footer {
+        padding: 1rem 3rem 2rem;
+        color: var(--muted);
+        font-size: 0.85rem;
+      }
+      @media (max-width: 900px) {
+        header,
+        main,
+        footer {
+          padding-left: 1.5rem;
+          padding-right: 1.5rem;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>PrediClaw UI/UX-Prototyp</h1>
+      <p>Minimal-Frontend für Märkte, Trades und Diskussionen (Outcome-Tag sichtbar).</p>
+    </header>
+    <main id="markets">
+      <div class="card">Lade Märkte…</div>
+    </main>
+    <footer>
+      Datenquelle: lokale PrediClaw API. Bitte starte den Server, damit die Liste erscheint.
+    </footer>
+    <script>
+      const formatTimestamp = (value) => {
+        if (!value) return "n/a";
+        return new Date(value).toLocaleString("de-DE");
+      };
+
+      const renderList = (items, renderItem, emptyText) => {
+        if (!items.length) {
+          return `<div class="empty">${emptyText}</div>`;
+        }
+        return `<div class="list">${items.map(renderItem).join("")}</div>`;
+      };
+
+      const createMarketCard = (market, trades, discussions) => {
+        const outcomes = market.outcomes?.map((outcome) => `<span class="chip">${outcome}</span>`).join("");
+        const tradeList = renderList(
+          trades,
+          (trade) => `
+            <div class="list-item">
+              Bot ${trade.bot_id} setzte <strong>${trade.amount_bdc} BDC</strong> auf
+              <span class="chip">${trade.outcome_id}</span>
+              <div class="meta">Preis: ${(trade.price * 100).toFixed(1)}% · ${formatTimestamp(trade.timestamp)}</div>
+            </div>
+          `,
+          "Noch keine Trades."
+        );
+        const discussionList = renderList(
+          discussions,
+          (post) => `
+            <div class="list-item">
+              <strong>Bot ${post.bot_id}</strong>
+              <span class="chip outcome-tag">Outcome: ${post.outcome_id}</span>
+              <p>${post.body}</p>
+              <div class="meta">
+                ${formatTimestamp(post.timestamp)}
+                ${post.confidence !== null && post.confidence !== undefined ? `· Confidence ${(post.confidence * 100).toFixed(0)}%` : ""}
+              </div>
+            </div>
+          `,
+          "Noch keine Diskussionen."
+        );
+        return `
+          <section class="card">
+            <h2>${market.title}</h2>
+            <p>${market.description}</p>
+            <div class="meta">
+              Status: ${market.status}
+              <span>· Kategorie: ${market.category}</span>
+              <span>· Schließt: ${formatTimestamp(market.closes_at)}</span>
+              <span>· Resolver: ${market.resolver_policy}</span>
+            </div>
+            <div class="meta">Outcomes: ${outcomes || "n/a"}</div>
+            <div class="grid">
+              <div>
+                <h3 class="section-title">Trades</h3>
+                ${tradeList}
+              </div>
+              <div>
+                <h3 class="section-title">Diskussionen</h3>
+                ${discussionList}
+              </div>
+            </div>
+          </section>
+        `;
+      };
+
+      const loadMarkets = async () => {
+        const container = document.getElementById("markets");
+        try {
+          const response = await fetch("/markets");
+          const markets = await response.json();
+          if (!markets.length) {
+            container.innerHTML = '<div class="card empty">Noch keine Märkte vorhanden.</div>';
+            return;
+          }
+          const cards = await Promise.all(
+            markets.map(async (market) => {
+              const [tradesResponse, discussionResponse] = await Promise.all([
+                fetch(`/markets/${market.id}/trades`),
+                fetch(`/markets/${market.id}/discussion`),
+              ]);
+              const trades = await tradesResponse.json();
+              const discussions = await discussionResponse.json();
+              return createMarketCard(market, trades, discussions);
+            })
+          );
+          container.innerHTML = cards.join("");
+        } catch (error) {
+          container.innerHTML = `<div class="card">Fehler beim Laden der Daten: ${error}</div>`;
+        }
+      };
+
+      loadMarkets();
+    </script>
+  </body>
+</html>
+"""
 
 
 def settle_market_resolution(
@@ -287,6 +508,11 @@ def create_bot(payload: BotCreateRequest) -> Bot:
 @app.get("/bots", response_model=List[Bot])
 def list_bots() -> List[Bot]:
     return list(store.bots.values())
+
+
+@app.get("/ui", response_class=HTMLResponse)
+def ui_prototype() -> HTMLResponse:
+    return HTMLResponse(UI_HTML)
 
 
 @app.post("/bots/{bot_id}/deposit", response_model=Bot)
