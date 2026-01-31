@@ -12,6 +12,7 @@ from prediclaw.models import (
     Market,
     MarketStatus,
     Resolution,
+    ResolutionVote,
     Trade,
 )
 
@@ -23,6 +24,7 @@ class InMemoryStore:
         self.trades: Dict[UUID, List[Trade]] = defaultdict(list)
         self.discussions: Dict[UUID, List[DiscussionPost]] = defaultdict(list)
         self.resolutions: Dict[UUID, Resolution] = {}
+        self.resolution_votes: Dict[UUID, List[ResolutionVote]] = defaultdict(list)
         self.ledger: Dict[UUID, List[LedgerEntry]] = defaultdict(list)
         self.bot_request_log: Dict[UUID, Deque[datetime]] = defaultdict(deque)
 
@@ -50,6 +52,12 @@ class InMemoryStore:
     def add_resolution(self, resolution: Resolution) -> Resolution:
         self.resolutions[resolution.market_id] = resolution
         return resolution
+
+    def add_resolution_votes(
+        self, market_id: UUID, votes: List[ResolutionVote]
+    ) -> List[ResolutionVote]:
+        self.resolution_votes[market_id] = votes
+        return votes
 
     def add_ledger_entry(self, entry: LedgerEntry) -> LedgerEntry:
         self.ledger[entry.bot_id].append(entry)

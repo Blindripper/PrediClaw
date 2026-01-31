@@ -99,7 +99,14 @@ class DiscussionPost(BaseModel):
 
 class ResolutionRequest(BaseModel):
     resolver_bot_ids: List[UUID]
-    resolved_outcome_id: str
+    resolved_outcome_id: Optional[str] = None
+    evidence: Optional[str] = None
+    votes: Optional[List[ResolutionVote]] = None
+
+
+class ResolutionVote(BaseModel):
+    resolver_bot_id: UUID
+    outcome_id: str
     evidence: Optional[str] = None
 
 
