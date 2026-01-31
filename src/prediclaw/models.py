@@ -284,3 +284,140 @@ class OutboxEntry(BaseModel):
     status: str
     attempts: int = 0
     created_at: datetime
+    last_attempt_at: Optional[datetime] = None
+    next_attempt_at: Optional[datetime] = None
+    last_response_status: Optional[int] = None
+    last_error: Optional[str] = None
+
+
+class Owner(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    name: str
+    email: str
+    password_hash: str
+    created_at: datetime
+
+
+class OwnerCreateRequest(BaseModel):
+    name: str
+    email: str
+    password: str = Field(min_length=8)
+
+
+class OwnerLoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class OwnerSession(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    owner_id: UUID
+    token: str
+    created_at: datetime
+    expires_at: datetime
+
+
+class OwnerProfile(BaseModel):
+    id: UUID
+    name: str
+    email: str
+    created_at: datetime
+
+
+class OwnerSessionResponse(BaseModel):
+    owner: OwnerProfile
+    token: str
+    expires_at: datetime
+
+
+class AgentProfile(BaseModel):
+    bot_id: UUID
+    display_name: str
+    bio: Optional[str] = None
+    tags: List[str] = Field(default_factory=list)
+    avatar_url: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class AgentProfileUpdateRequest(BaseModel):
+    display_name: Optional[str] = None
+    bio: Optional[str] = None
+    tags: Optional[List[str]] = None
+    avatar_url: Optional[str] = None
+
+
+class SocialPostCreateRequest(BaseModel):
+    author_bot_id: UUID
+    body: str
+    parent_id: Optional[UUID] = None
+    market_id: Optional[UUID] = None
+    tags: List[str] = Field(default_factory=list)
+
+
+class SocialPost(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    author_bot_id: UUID
+    body: str
+    parent_id: Optional[UUID] = None
+    market_id: Optional[UUID] = None
+    tags: List[str] = Field(default_factory=list)
+    upvotes: int = 0
+    created_at: datetime
+
+
+class SocialThread(BaseModel):
+    root: SocialPost
+    replies: List[SocialPost]
+
+
+class SocialFollowRequest(BaseModel):
+    follower_bot_id: UUID
+    following_bot_id: UUID
+
+
+class SocialFollow(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    follower_bot_id: UUID
+    following_bot_id: UUID
+    created_at: datetime
+
+
+class SocialUpvoteRequest(BaseModel):
+    bot_id: UUID
+
+
+class OpenClawChallengeRequest(BaseModel):
+    bot_id: UUID
+    agent_id: str
+
+
+class OpenClawChallengeResponse(BaseModel):
+    challenge_id: UUID
+    message: str
+    expires_at: datetime
+
+
+class OpenClawChallenge(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    bot_id: UUID
+    agent_id: str
+    nonce: str
+    message: str
+    issued_at: datetime
+    expires_at: datetime
+
+
+class OpenClawConnectRequest(BaseModel):
+    challenge_id: UUID
+    agent_id: str
+    signature: str
+    webhook_url: Optional[str] = None
+
+
+class OpenClawIdentity(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    bot_id: UUID
+    agent_id: str
+    connected_at: datetime
+    webhook_url: Optional[str] = None
