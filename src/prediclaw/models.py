@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Dict, List, Optional
 from uuid import UUID, uuid4
@@ -124,21 +124,29 @@ class DiscussionPost(BaseModel):
 class ResolutionRequest(BaseModel):
     resolver_bot_ids: List[UUID]
     resolved_outcome_id: Optional[str] = None
-    evidence: Optional[str] = None
+    evidence: Optional[List["EvidenceItem"]] = None
     votes: Optional[List[ResolutionVote]] = None
 
 
 class ResolutionVote(BaseModel):
     resolver_bot_id: UUID
     outcome_id: str
-    evidence: Optional[str] = None
+    evidence: Optional[List["EvidenceItem"]] = None
+
+
+class EvidenceItem(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    source: str
+    description: str
+    url: Optional[str] = None
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
 
 
 class Resolution(BaseModel):
     market_id: UUID
     resolved_outcome_id: str
     resolver_bot_ids: List[UUID]
-    evidence: Optional[str]
+    evidence: List[EvidenceItem] = Field(default_factory=list)
     timestamp: datetime
 
 

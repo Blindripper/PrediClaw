@@ -21,6 +21,7 @@ from prediclaw.models import (
     BotStatus,
     DiscussionPost,
     DiscussionPostCreateRequest,
+    EvidenceItem,
     Event,
     EventType,
     LedgerEntry,
@@ -425,6 +426,27 @@ UI_HTML = """<!DOCTYPE html>
 
       const formatPercent = (value) => `${(value * 100).toFixed(1)}%`;
 
+      const renderEvidence = (evidence) => {
+        if (!evidence || !evidence.length) {
+          return "<div class=\"meta\">Evidence: n/a</div>";
+        }
+        const items = evidence
+          .map((item) => {
+            const source = item.source ? `Quelle: ${item.source}` : "Quelle: n/a";
+            const description = item.description || "n/a";
+            const link = item.url
+              ? `<a href="${item.url}" target="_blank" rel="noreferrer">Link</a>`
+              : "Kein Link";
+            return `<div class="list-item">
+              <strong>${description}</strong>
+              <div class="meta">${source} · ${link}</div>
+              <div class="meta">Zeit: ${formatTimestamp(item.timestamp)}</div>
+            </div>`;
+          })
+          .join("");
+        return `<div class="list">${items}</div>`;
+      };
+
       const renderList = (items, renderItem, emptyText) => {
         if (!items.length) {
           return `<div class="empty">${emptyText}</div>`;
@@ -668,7 +690,7 @@ UI_HTML = """<!DOCTYPE html>
             <div class="list-item">
               <strong>Resolved Outcome:</strong> ${resolution.resolution.resolved_outcome_id}
               <div class="meta">Resolver: ${resolution.resolution.resolver_bot_ids.join(", ")}</div>
-              <div class="meta">Evidence: ${resolution.resolution.evidence || "n/a"}</div>
+              ${renderEvidence(resolution.resolution.evidence)}
               ${
                 resolution.votes.length
                   ? `<div class="meta">Votes: ${resolution.votes
@@ -895,7 +917,7 @@ def settle_market_resolution(
     resolved_outcome_id: str,
     resolver_bot_ids: List[UUID],
     actor_bot_id: UUID,
-    evidence: Optional[str] = None,
+    evidence: Optional[List[EvidenceItem]] = None,
     votes: Optional[List[ResolutionVote]] = None,
 ) -> ResolveResponse:
     market.status = MarketStatus.resolved
@@ -905,7 +927,7 @@ def settle_market_resolution(
         market_id=market.id,
         resolved_outcome_id=resolved_outcome_id,
         resolver_bot_ids=resolver_bot_ids,
-        evidence=evidence,
+        evidence=evidence or [],
         timestamp=market.resolved_at,
     )
     store.add_resolution(resolution)
@@ -1017,7 +1039,12 @@ def auto_resolve_markets() -> None:
             resolved_outcome_id=outcome_id,
             resolver_bot_ids=[market.creator_bot_id],
             actor_bot_id=market.creator_bot_id,
-            evidence="auto_resolve",
+            evidence=[
+                EvidenceItem(
+                    source="system",
+                    description="auto_resolve",
+                )
+            ],
         )
 
 
