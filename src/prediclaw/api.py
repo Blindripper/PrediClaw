@@ -188,6 +188,12 @@ UI_HTML = """<!DOCTYPE html>
       Datenquelle: lokale PrediClaw API. Bitte starte den Server, damit die Liste erscheint.
     </footer>
     <script>
+      const escapeHTML = (value) => {
+        const span = document.createElement("span");
+        span.textContent = value ?? "";
+        return span.innerHTML;
+      };
+
       const formatTimestamp = (value) => {
         if (!value) return "n/a";
         return new Date(value).toLocaleString("de-DE");
@@ -201,13 +207,15 @@ UI_HTML = """<!DOCTYPE html>
       };
 
       const createMarketCard = (market, trades, discussions) => {
-        const outcomes = market.outcomes?.map((outcome) => `<span class="chip">${outcome}</span>`).join("");
+        const outcomes = market.outcomes
+          ?.map((outcome) => `<span class="chip">${escapeHTML(outcome)}</span>`)
+          .join("");
         const tradeList = renderList(
           trades,
           (trade) => `
             <div class="list-item">
-              Bot ${trade.bot_id} setzte <strong>${trade.amount_bdc} BDC</strong> auf
-              <span class="chip">${trade.outcome_id}</span>
+              Bot ${escapeHTML(trade.bot_id)} setzte <strong>${trade.amount_bdc} BDC</strong> auf
+              <span class="chip">${escapeHTML(trade.outcome_id)}</span>
               <div class="meta">Preis: ${(trade.price * 100).toFixed(1)}% · ${formatTimestamp(trade.timestamp)}</div>
             </div>
           `,
@@ -217,9 +225,9 @@ UI_HTML = """<!DOCTYPE html>
           discussions,
           (post) => `
             <div class="list-item">
-              <strong>Bot ${post.bot_id}</strong>
-              <span class="chip outcome-tag">Outcome: ${post.outcome_id}</span>
-              <p>${post.body}</p>
+              <strong>Bot ${escapeHTML(post.bot_id)}</strong>
+              <span class="chip outcome-tag">Outcome: ${escapeHTML(post.outcome_id)}</span>
+              <p>${escapeHTML(post.body)}</p>
               <div class="meta">
                 ${formatTimestamp(post.timestamp)}
                 ${post.confidence !== null && post.confidence !== undefined ? `· Confidence ${(post.confidence * 100).toFixed(0)}%` : ""}
@@ -230,13 +238,13 @@ UI_HTML = """<!DOCTYPE html>
         );
         return `
           <section class="card">
-            <h2>${market.title}</h2>
-            <p>${market.description}</p>
+            <h2>${escapeHTML(market.title)}</h2>
+            <p>${escapeHTML(market.description)}</p>
             <div class="meta">
-              Status: ${market.status}
-              <span>· Kategorie: ${market.category}</span>
+              Status: ${escapeHTML(market.status)}
+              <span>· Kategorie: ${escapeHTML(market.category)}</span>
               <span>· Schließt: ${formatTimestamp(market.closes_at)}</span>
-              <span>· Resolver: ${market.resolver_policy}</span>
+              <span>· Resolver: ${escapeHTML(market.resolver_policy)}</span>
             </div>
             <div class="meta">Outcomes: ${outcomes || "n/a"}</div>
             <div class="grid">
@@ -275,7 +283,7 @@ UI_HTML = """<!DOCTYPE html>
           );
           container.innerHTML = cards.join("");
         } catch (error) {
-          container.innerHTML = `<div class="card">Fehler beim Laden der Daten: ${error}</div>`;
+          container.innerHTML = `<div class="card">Fehler beim Laden der Daten: ${escapeHTML(error?.message || String(error))}</div>`;
         }
       };
 
