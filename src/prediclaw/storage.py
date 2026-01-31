@@ -8,12 +8,16 @@ from uuid import UUID
 from prediclaw.models import (
     Bot,
     DiscussionPost,
+    Event,
+    EventType,
     LedgerEntry,
     Market,
     MarketStatus,
+    OutboxEntry,
     Resolution,
     ResolutionVote,
     Trade,
+    WebhookRegistration,
 )
 
 
@@ -27,6 +31,9 @@ class InMemoryStore:
         self.resolution_votes: Dict[UUID, List[ResolutionVote]] = defaultdict(list)
         self.ledger: Dict[UUID, List[LedgerEntry]] = defaultdict(list)
         self.bot_request_log: Dict[UUID, Deque[datetime]] = defaultdict(deque)
+        self.webhooks: Dict[UUID, List[WebhookRegistration]] = defaultdict(list)
+        self.events: List[Event] = []
+        self.outbox: List[OutboxEntry] = []
 
     def now(self) -> datetime:
         return datetime.now(tz=UTC)
@@ -63,11 +70,42 @@ class InMemoryStore:
         self.ledger[entry.bot_id].append(entry)
         return entry
 
+    def add_webhook(self, webhook: WebhookRegistration) -> WebhookRegistration:
+        self.webhooks[webhook.bot_id].append(webhook)
+        return webhook
+
+    def add_event(self, event: Event) -> Event:
+        self.events.append(event)
+        for registrations in self.webhooks.values():
+            for webhook in registrations:
+                if webhook.event_types and event.event_type not in webhook.event_types:
+                    continue
+                self.outbox.append(
+                    OutboxEntry(
+                        webhook_id=webhook.id,
+                        event_id=event.id,
+                        event_type=event.event_type,
+                        target_url=webhook.url,
+                        status="pending",
+                        created_at=self.now(),
+                    )
+                )
+        return event
+
     def close_expired_markets(self) -> None:
         now = self.now()
         for market in self.markets.values():
             if market.status == MarketStatus.open and now >= market.closes_at:
                 market.status = MarketStatus.closed
+                self.add_event(
+                    Event(
+                        event_type=EventType.market_closed,
+                        market_id=market.id,
+                        bot_id=market.creator_bot_id,
+                        payload={"status": market.status},
+                        timestamp=now,
+                    )
+                )
 
     def prune_bot_requests(self, bot_id: UUID, window_seconds: int) -> Deque[datetime]:
         now = self.now()
