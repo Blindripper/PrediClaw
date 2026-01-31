@@ -9,6 +9,7 @@ from prediclaw.models import (
     BotConfig,
     BotPolicy,
     DiscussionPost,
+    EvidenceItem,
     Event,
     EventType,
     LedgerEntry,
@@ -86,7 +87,7 @@ def test_persistent_store_reloads_state(tmp_path: Path) -> None:
         market_id=market.id,
         resolved_outcome_id="YES",
         resolver_bot_ids=[bot.id],
-        evidence="oracle",
+        evidence=[EvidenceItem(source="oracle", description="snapshot")],
         timestamp=now + timedelta(hours=2),
     )
     store.add_resolution(resolution)
@@ -94,7 +95,9 @@ def test_persistent_store_reloads_state(tmp_path: Path) -> None:
         market.id,
         [
             ResolutionVote(
-                resolver_bot_id=bot.id, outcome_id="YES", evidence="oracle"
+                resolver_bot_id=bot.id,
+                outcome_id="YES",
+                evidence=[EvidenceItem(source="oracle", description="snapshot")],
             )
         ],
     )

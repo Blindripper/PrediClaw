@@ -59,6 +59,13 @@ def setup_client() -> TestClient:
     return TestClient(api.app)
 
 
+def build_evidence(source: str, description: str) -> dict:
+    return {
+        "source": source,
+        "description": description,
+    }
+
+
 def test_core_flow_bot_deposit_market_trade_resolve_ledger() -> None:
     with setup_client() as client:
         bot, headers = build_bot(client, "alpha")
@@ -83,6 +90,18 @@ def test_core_flow_bot_deposit_market_trade_resolve_ledger() -> None:
         )
         assert trade_response.status_code == 200
 
+        discussion_response = client.post(
+            f"/markets/{market['id']}/discussion",
+            json={
+                "bot_id": bot["id"],
+                "outcome_id": "YES",
+                "body": "Bullish momentum",
+                "confidence": 0.72,
+            },
+            headers=headers,
+        )
+        assert discussion_response.status_code == 200
+
         api.store.markets[UUID(market["id"])].closes_at = datetime.now(
             timezone.utc
         ) - timedelta(minutes=1)
@@ -92,13 +111,14 @@ def test_core_flow_bot_deposit_market_trade_resolve_ledger() -> None:
             json={
                 "resolver_bot_ids": [bot["id"]],
                 "resolved_outcome_id": "YES",
-                "evidence": "oracle",
+                "evidence": [build_evidence("oracle", "primary feed")],
             },
             headers=headers,
         )
         assert resolve_response.status_code == 200
         resolve_payload = resolve_response.json()
         assert resolve_payload["resolution"]["resolved_outcome_id"] == "YES"
+        assert resolve_payload["resolution"]["evidence"]
 
         ledger_response = client.get(f"/bots/{bot['id']}/ledger")
         assert ledger_response.status_code == 200
@@ -199,7 +219,7 @@ def test_market_filters_liquidity_and_resolution_details() -> None:
             json={
                 "resolver_bot_ids": [bot["id"]],
                 "resolved_outcome_id": "YES",
-                "evidence": "oracle",
+                "evidence": [build_evidence("oracle", "primary feed")],
             },
             headers=headers,
         )
@@ -213,3 +233,116 @@ def test_market_filters_liquidity_and_resolution_details() -> None:
             resolution_response.json()["resolution"]["resolved_outcome_id"]
             == "YES"
         )
+
+
+def test_majority_policy_resolves_with_votes_and_evidence() -> None:
+    with setup_client() as client:
+        bot_alpha, headers_alpha = build_bot(client, "alpha")
+        bot_beta, headers_beta = build_bot(client, "beta")
+        bot_gamma, headers_gamma = build_bot(client, "gamma")
+        for bot, headers in [
+            (bot_alpha, headers_alpha),
+            (bot_beta, headers_beta),
+            (bot_gamma, headers_gamma),
+        ]:
+            client.post(
+                f"/bots/{bot['id']}/deposit",
+                json={"amount_bdc": 30.0, "reason": "seed"},
+                headers=headers,
+            )
+        market = build_market(
+            client,
+            headers_alpha,
+            bot_alpha["id"],
+            datetime.now(timezone.utc) + timedelta(hours=1),
+            resolver_policy="majority",
+        )
+
+        api.store.markets[UUID(market["id"])].closes_at = datetime.now(
+            timezone.utc
+        ) - timedelta(minutes=1)
+
+        resolve_response = client.post(
+            f"/markets/{market['id']}/resolve",
+            json={
+                "resolver_bot_ids": [
+                    bot_alpha["id"],
+                    bot_beta["id"],
+                    bot_gamma["id"],
+                ],
+                "votes": [
+                    {
+                        "resolver_bot_id": bot_alpha["id"],
+                        "outcome_id": "YES",
+                        "evidence": [build_evidence("bot", "signal a")],
+                    },
+                    {
+                        "resolver_bot_id": bot_beta["id"],
+                        "outcome_id": "YES",
+                        "evidence": [build_evidence("bot", "signal b")],
+                    },
+                    {
+                        "resolver_bot_id": bot_gamma["id"],
+                        "outcome_id": "NO",
+                        "evidence": [build_evidence("bot", "signal c")],
+                    },
+                ],
+            },
+            headers=headers_alpha,
+        )
+        assert resolve_response.status_code == 200
+        payload = resolve_response.json()
+        assert payload["resolution"]["resolved_outcome_id"] == "YES"
+
+
+def test_consensus_policy_resolves_by_weighted_reputation() -> None:
+    with setup_client() as client:
+        bot_alpha, headers_alpha = build_bot(client, "alpha")
+        bot_beta, headers_beta = build_bot(client, "beta")
+        client.post(
+            f"/bots/{bot_alpha['id']}/deposit",
+            json={"amount_bdc": 30.0, "reason": "seed"},
+            headers=headers_alpha,
+        )
+        client.post(
+            f"/bots/{bot_beta['id']}/deposit",
+            json={"amount_bdc": 30.0, "reason": "seed"},
+            headers=headers_beta,
+        )
+        api.store.bots[UUID(bot_alpha["id"])].reputation_score = 2.0
+        api.store.bots[UUID(bot_beta["id"])].reputation_score = 1.0
+
+        market = build_market(
+            client,
+            headers_alpha,
+            bot_alpha["id"],
+            datetime.now(timezone.utc) + timedelta(hours=1),
+            resolver_policy="consensus",
+        )
+
+        api.store.markets[UUID(market["id"])].closes_at = datetime.now(
+            timezone.utc
+        ) - timedelta(minutes=1)
+
+        resolve_response = client.post(
+            f"/markets/{market['id']}/resolve",
+            json={
+                "resolver_bot_ids": [bot_alpha["id"], bot_beta["id"]],
+                "votes": [
+                    {
+                        "resolver_bot_id": bot_alpha["id"],
+                        "outcome_id": "NO",
+                        "evidence": [build_evidence("bot", "strong signal")],
+                    },
+                    {
+                        "resolver_bot_id": bot_beta["id"],
+                        "outcome_id": "YES",
+                        "evidence": [build_evidence("bot", "weak signal")],
+                    },
+                ],
+            },
+            headers=headers_alpha,
+        )
+        assert resolve_response.status_code == 200
+        payload = resolve_response.json()
+        assert payload["resolution"]["resolved_outcome_id"] == "NO"
