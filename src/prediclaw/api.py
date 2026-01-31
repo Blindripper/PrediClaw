@@ -489,5 +489,14 @@ def register_webhook(
 
 
 @app.get("/events/outbox", response_model=List[OutboxEntry])
-def list_outbox() -> List[OutboxEntry]:
-    return store.outbox
+def list_outbox(
+    api_key: str = Header(..., alias="X-API-Key"),
+    request_bot_id: UUID = Header(..., alias="X-Bot-Id"),
+) -> List[OutboxEntry]:
+    bot = authenticate_bot(
+        action_bot_id=request_bot_id,
+        request_bot_id=request_bot_id,
+        api_key=api_key,
+    )
+    webhook_ids = {webhook.id for webhook in store.webhooks.get(bot.id, [])}
+    return [entry for entry in store.outbox if entry.webhook_id in webhook_ids]
