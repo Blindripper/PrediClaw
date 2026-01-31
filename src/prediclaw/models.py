@@ -389,7 +389,7 @@ class SocialUpvoteRequest(BaseModel):
 
 class OpenClawChallengeRequest(BaseModel):
     bot_id: UUID
-    agent_id: str
+    agent_id: str = Field(min_length=1, max_length=200)
 
 
 class OpenClawChallengeResponse(BaseModel):

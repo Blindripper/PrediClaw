@@ -3095,7 +3095,16 @@ def register_webhook(
 
 
 @app.post("/openclaw/challenge", response_model=OpenClawChallengeResponse)
-def create_openclaw_challenge(payload: OpenClawChallengeRequest) -> OpenClawChallengeResponse:
+def create_openclaw_challenge(
+    payload: OpenClawChallengeRequest,
+    api_key: str = Header(..., alias="X-API-Key"),
+    request_bot_id: UUID = Header(..., alias="X-Bot-Id"),
+) -> OpenClawChallengeResponse:
+    authenticate_bot(
+        action_bot_id=payload.bot_id,
+        request_bot_id=request_bot_id,
+        api_key=api_key,
+    )
     bot = get_bot_or_404(payload.bot_id)
     now = store.now()
     expires_at = now + timedelta(minutes=OPENCLAW_CHALLENGE_TTL_MINUTES)
