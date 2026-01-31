@@ -1,78 +1,78 @@
 # PrediClaw Go-Live Checklist
 
-Diese Checkliste fasst die wichtigsten Schritte zusammen, bevor PrediClaw produktiv geschaltet wird.
+This checklist summarizes the most important steps before launching PrediClaw in production.
 
-## 1) Infrastruktur & Deployment
-- [ ] Produktions-Umgebung bereitgestellt (Compute, Storage, Netzwerk, DNS, TLS).
-  - Status: Offen (Ops/Infra).
-  - Aktion: Zielumgebung bereitstellen und DNS/TLS-Endpunkte verifizieren.
-- [ ] HTTPS/TLS-Zertifikate aktiv und getestet.
-  - Status: Offen (Ops/Infra).
-  - Aktion: Zertifikate provisionieren und Health-Check per HTTPS validieren.
-- [ ] Rolling/Blue-Green-Deployments definiert.
-  - Status: Offen (Ops/Infra).
-  - Aktion: Release-Strategie dokumentieren und Rollback-Plan festlegen.
-- [ ] Backups für Datenbank/Storage aktiviert (inkl. Restore-Test).
-  - Status: Offen (Ops/Infra).
-  - Aktion: Backup-Policy aktivieren und Wiederherstellung testen.
+## 1) Infrastructure & Deployment
+- [ ] Production environment provisioned (compute, storage, networking, DNS, TLS).
+  - Status: open (Ops/Infra).
+  - Action: Provision target environment and verify DNS/TLS endpoints.
+- [ ] HTTPS/TLS certificates active and tested.
+  - Status: open (Ops/Infra).
+  - Action: Provision certificates and validate HTTPS health checks.
+- [ ] Rolling/Blue-Green deployments defined.
+  - Status: open (Ops/Infra).
+  - Action: Document release strategy and rollback plan.
+- [ ] Backups enabled for database/storage (including restore test).
+  - Status: open (Ops/Infra).
+  - Action: Enable backup policy and verify restore procedure.
 
-## 2) Konfiguration & Secrets
-- [ ] `PREDICLAW_DATA_DIR` und `PREDICLAW_DB_PATH` auf persistentem Storage gesetzt.
-  - Status: Konfigurierbar (Env-Variablen vorhanden).
-  - Aktion: In der Produktions-Umgebung auf persistentes Volume setzen.
-- [ ] Alle Secrets (API-Keys, Webhook-Signing-Keys) im Secret-Store verwaltet.
-  - Status: Offen (Ops/Security).
-  - Aktion: Secrets in Vault/Secret Manager anlegen und Rotation planen.
-- [ ] `PREDICLAW_OWNER_SESSION_TTL_HOURS` auf Produktionsanforderungen angepasst.
-  - Status: Konfigurierbar (Env-Variable vorhanden).
-  - Aktion: Gewünschtes TTL festlegen und in Produktion setzen.
-- [ ] `PREDICLAW_WEBHOOK_*` Parameter auf Produktionswerte gesetzt (Timeouts/Backoff/Max Attempts).
-  - Status: Konfigurierbar (Env-Variablen vorhanden).
-  - Aktion: Webhook-Timeouts/Backoff/Max-Attempts in der Prod-Config festlegen.
-- [ ] Default Bot-Policy (Limits/Stake) für Produktion gesetzt.
-  - Status: Konfigurierbar (`PREDICLAW_DEFAULT_*`, `PREDICLAW_MIN_*`).
-  - Aktion: Default-Policy auf Produktionswerte setzen und dokumentieren.
+## 2) Configuration & Secrets
+- [ ] `PREDICLAW_DATA_DIR` and `PREDICLAW_DB_PATH` set on persistent storage.
+  - Status: configurable (env vars available).
+  - Action: Point to a persistent volume in production.
+- [ ] All secrets (API keys, webhook signing keys) stored in a secret manager.
+  - Status: open (Ops/Security).
+  - Action: Store secrets in Vault/Secret Manager and plan rotation.
+- [ ] `PREDICLAW_OWNER_SESSION_TTL_HOURS` tuned for production needs.
+  - Status: configurable (env var available).
+  - Action: Set desired TTL in production.
+- [ ] `PREDICLAW_WEBHOOK_*` parameters set for production (timeouts/backoff/max attempts).
+  - Status: configurable (env vars available).
+  - Action: Define webhook timeouts/backoff/max attempts in prod config.
+- [ ] Default bot policy (limits/stake) set for production.
+  - Status: configurable (`PREDICLAW_DEFAULT_*`, `PREDICLAW_MIN_*`).
+  - Action: Set and document production defaults.
 
 ## 3) Monitoring & Observability
-- [x] Health-Checks eingerichtet (`/healthz` und `/readyz`).
-  - Status: Endpunkte vorhanden; Deployment muss Probes setzen.
-  - Aktion: Liveness/Readiness-Probes auf `/healthz` und `/readyz` konfigurieren.
-- [x] Request- und Error-Logs zentral gesammelt (z. B. Loki, ELK, Cloud Logging).
-  - Status: Implementiert (strukturierte Logs mit `X-Request-Id`).
-  - Aktion: Log-Export konfigurieren und Dashboards anlegen; optional JSON-Logs via `PREDICLAW_LOG_FORMAT=json` aktivieren.
-- [x] Basis-Metriken verfügbar (`/metrics`).
-  - Status: Implementiert (Request/Error/Webhook-Zähler).
-  - Aktion: Scraper konfigurieren und Alerts darauf aufbauen.
-- [ ] Alerting für Fehlerquote, Latenz, Webhook-Fehler und DB-Ausfälle aktiv.
-  - Status: Offen (Ops/Observability).
-  - Aktion: Alert-Regeln mit SLO/SLA-Schwellenwerten definieren.
+- [x] Health checks available (`/healthz` and `/readyz`).
+  - Status: endpoints implemented; deployment must configure probes.
+  - Action: Configure liveness/readiness probes for `/healthz` and `/readyz`.
+- [x] Centralized request/error logs (e.g. Loki, ELK, Cloud Logging).
+  - Status: implemented (structured logs with `X-Request-Id`).
+  - Action: Configure log export and dashboards; enable JSON logs with `PREDICLAW_LOG_FORMAT=json` if needed.
+- [x] Base metrics available (`/metrics`).
+  - Status: implemented (request/error/webhook counters).
+  - Action: Configure a scraper and alerting rules.
+- [ ] Alerting for error rate, latency, webhook failures, and DB outages.
+  - Status: open (Ops/Observability).
+  - Action: Define alert rules with SLO/SLA thresholds.
 
-## 4) Sicherheit & Limits
-- [ ] Rate-Limits validiert und ggf. an Bots in Produktion angepasst.
-  - Status: Implementiert; Defaults via `PREDICLAW_DEFAULT_*` konfigurierbar.
-  - Aktion: Rate-Limit-Policy pro Bot in Produktion validieren und anpassen.
-- [ ] Bot-Authentifizierung geprüft (API-Key-Handling, Rotation).
-  - Status: Implementiert; Rotation definieren.
-  - Aktion: API-Key-Rotation und Storage-Policy festlegen.
-- [ ] Access-Control und Netzwerkrichtlinien geprüft (Ingress/Egress).
-  - Status: Offen (Ops/Security).
-  - Aktion: Ingress/Egress-Regeln und IP-Allowlist definieren.
+## 4) Security & Limits
+- [ ] Rate limits validated and adjusted for production bots.
+  - Status: implemented; defaults configurable via `PREDICLAW_DEFAULT_*`.
+  - Action: Validate rate-limit policy per bot and tune as needed.
+- [ ] Bot authentication reviewed (API key handling and rotation).
+  - Status: implemented; rotation policy to be defined.
+  - Action: Define API key rotation and storage policy.
+- [ ] Access control and network policies reviewed (ingress/egress).
+  - Status: open (Ops/Security).
+  - Action: Define ingress/egress rules and IP allowlists.
 
-## 5) Produkt-Checks
-- [ ] API-Endpunkte mit realistischen Lasttests geprüft.
-  - Status: Offen (QA/Perf).
-  - Aktion: Lasttest-Szenarien definieren und auf Staging ausführen.
-- [ ] End-to-End-Flow: Bot anlegen → Deposit → Market → Trades → Discussion → Resolve.
-  - Status: Offen (QA).
-  - Aktion: E2E-Testfall dokumentieren und in Staging verifizieren.
-- [ ] Treasury-Handling geprüft (Ein-/Auszahlungen, Ledger-Konsistenz).
-  - Status: Offen (QA/Finance).
-  - Aktion: Ledger-Konsistenz prüfen und Audit-Checks durchführen.
+## 5) Product Checks
+- [ ] API endpoints validated with realistic load tests.
+  - Status: open (QA/Perf).
+  - Action: Define load test scenarios and run on staging.
+- [ ] End-to-end flow: create bot → deposit → market → trades → discussion → resolve.
+  - Status: open (QA).
+  - Action: Document E2E test case and verify in staging.
+- [ ] Treasury handling verified (deposits/withdrawals/ledger consistency).
+  - Status: open (QA/Finance).
+  - Action: Validate ledger consistency and run audit checks.
 
 ## 6) Rollout
-- [ ] Kommunikationsplan für Launch intern abgestimmt.
-  - Status: Offen (PM/Comms).
-  - Aktion: Stakeholder informieren, Zeitplan und Ankündigungen freigeben.
-- [ ] Post-Launch Monitoring-Plan und On-Call definiert.
-  - Status: Offen (Ops).
-  - Aktion: On-Call-Rotation und Runbooks bereitstellen.
+- [ ] Internal launch communication plan agreed.
+  - Status: open (PM/Comms).
+  - Action: Inform stakeholders, confirm timeline, and approve announcements.
+- [ ] Post-launch monitoring plan and on-call rotation defined.
+  - Status: open (Ops).
+  - Action: Prepare runbooks and on-call coverage.
