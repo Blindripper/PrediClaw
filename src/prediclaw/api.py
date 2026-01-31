@@ -40,7 +40,7 @@ from prediclaw.models import (
     WebhookRegistration,
     WebhookRegistrationRequest,
 )
-from prediclaw.storage import InMemoryStore
+from prediclaw.storage import InMemoryStore, PersistentStore
 
 
 class TradeResponse(BaseModel):
@@ -84,7 +84,12 @@ class ResolutionDetail(BaseModel):
     votes: List[ResolutionVote]
 
 
-store = InMemoryStore()
+DB_PATH = os.getenv("PREDICLAW_DB_PATH")
+store = (
+    PersistentStore(DB_PATH)
+    if DB_PATH
+    else InMemoryStore()
+)
 app = FastAPI(title="PrediClaw API", version="0.1.0")
 MAX_BOT_REQUESTS_PER_MINUTE = 60
 RATE_LIMIT_WINDOW_SECONDS = 60
@@ -895,6 +900,7 @@ def settle_market_resolution(
 ) -> ResolveResponse:
     market.status = MarketStatus.resolved
     market.resolved_at = store.now()
+    store.save_market(market)
     resolution = Resolution(
         market_id=market.id,
         resolved_outcome_id=resolved_outcome_id,
@@ -931,6 +937,7 @@ def settle_market_resolution(
             payout_amount = share * total_pool
             bot = get_bot_or_404(trade.bot_id)
             bot.wallet_balance_bdc += payout_amount
+            store.save_bot(bot)
             entry = LedgerEntry(
                 bot_id=bot.id,
                 market_id=market.id,
@@ -962,6 +969,7 @@ def settle_market_resolution(
                         continue
                     bot = get_bot_or_404(bot_id)
                     bot.wallet_balance_bdc += amount
+                    store.save_bot(bot)
                     store.add_ledger_entry(
                         LedgerEntry(
                             bot_id=bot.id,
@@ -974,6 +982,7 @@ def settle_market_resolution(
         treasury_amount = remainder - liquidity_distribution
         if config.send_unpaid_to_treasury and treasury_amount > 0:
             store.treasury_balance_bdc += treasury_amount
+            store.save_treasury_state()
             store.add_treasury_entry(
                 TreasuryLedgerEntry(
                     market_id=market.id,
@@ -1155,6 +1164,7 @@ def rotate_bot_key(
         api_key=api_key,
     )
     bot.api_key = secrets.token_urlsafe(32)
+    store.save_bot(bot)
     return BotKeyResponse(bot_id=bot.id, api_key=bot.api_key, rotated_at=store.now())
 
 
@@ -1171,6 +1181,7 @@ def deposit_bdc(
         api_key=api_key,
     )
     bot.wallet_balance_bdc += payload.amount_bdc
+    store.save_bot(bot)
     store.add_ledger_entry(
         LedgerEntry(
             bot_id=bot.id,
@@ -1201,9 +1212,10 @@ def update_bot_policy(
         api_key=api_key,
     )
     previous_policy = ensure_bot_policy(bot)
-    store.bot_policies[bot.id] = payload
+    store.save_bot_policy(bot.id, payload)
     if payload.status != previous_policy.status:
         bot.status = payload.status
+        store.save_bot(bot)
         store.add_event(
             Event(
                 event_type=EventType.bot_status_changed,
@@ -1233,7 +1245,7 @@ def update_bot_config(
         request_bot_id=request_bot_id,
         api_key=api_key,
     )
-    store.bot_configs[bot.id] = payload
+    store.save_bot_config(bot.id, payload)
     return payload
 
 
@@ -1354,6 +1366,8 @@ def create_trade(
         raise HTTPException(status_code=403, detail="Trade exceeds policy limit.")
     bot.wallet_balance_bdc -= payload.amount_bdc
     market.outcome_pools[payload.outcome_id] += payload.amount_bdc
+    store.save_bot(bot)
+    store.save_market(market)
     total_pool = sum(market.outcome_pools.values())
     price = market.outcome_pools[payload.outcome_id] / total_pool if total_pool else 0.0
     trade = Trade(
@@ -1672,4 +1686,5 @@ def update_treasury_config(
     )
     validate_treasury_config(payload)
     store.treasury_config = payload
+    store.save_treasury_state()
     return store.treasury_config
