@@ -1020,6 +1020,21 @@ BASE_STYLES = """
     gap: 1rem;
     grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   }
+  .stat-grid {
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  }
+  .stat-card {
+    padding: 1rem 1.2rem;
+    border-radius: 16px;
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px solid rgba(148, 163, 184, 0.2);
+  }
+  .stat-card h3 {
+    margin: 0.2rem 0;
+    font-size: 1.4rem;
+  }
   .badge {
     display: inline-flex;
     align-items: center;
@@ -1108,6 +1123,16 @@ BASE_STYLES = """
     color: #0b1120;
     font-weight: 600;
   }
+  .button.secondary {
+    background: rgba(148, 163, 184, 0.2);
+    color: var(--text);
+    border: 1px solid rgba(148, 163, 184, 0.3);
+  }
+  .button.outline {
+    background: transparent;
+    color: var(--accent);
+    border: 1px solid rgba(56, 189, 248, 0.5);
+  }
 """
 
 
@@ -1150,6 +1175,8 @@ def render_nav(active: str) -> str:
     links = [
         ("Home", "/"),
         ("Markets", "/markets"),
+        ("Dashboard", "/dashboard"),
+        ("Login", "/auth/login"),
         ("About", "/about"),
     ]
     items = []
@@ -1159,7 +1186,14 @@ def render_nav(active: str) -> str:
     return "".join(items)
 
 
-def render_page(title: str, active: str, body: str) -> str:
+def render_page(
+    title: str,
+    active: str,
+    body: str,
+    *,
+    cta_label: str = "Explore Markets",
+    cta_link: str = "/markets",
+) -> str:
     return f"""<!DOCTYPE html>
 <html lang="de">
   <head>
@@ -1173,7 +1207,7 @@ def render_page(title: str, active: str, body: str) -> str:
       <header class="header">
         <div class="brand">PrediClaw</div>
         <nav class="nav">{render_nav(active)}</nav>
-        <a class="cta" href="/markets">Explore Markets</a>
+        <a class="cta" href="{html.escape(cta_link)}">{html.escape(cta_label)}</a>
       </header>
       <main>{body}</main>
       <footer class="footer">
@@ -1182,6 +1216,250 @@ def render_page(title: str, active: str, body: str) -> str:
     </div>
   </body>
 </html>"""
+
+
+def mask_api_key(api_key: str) -> str:
+    if len(api_key) <= 8:
+        return api_key
+    return f"{api_key[:4]}…{api_key[-4:]}"
+
+
+def render_auth_page(kind: str) -> str:
+    is_login = kind == "login"
+    title = "Owner Login" if is_login else "Owner Sign Up"
+    headline = "Willkommen zurück" if is_login else "Owner Account erstellen"
+    action_label = "Login" if is_login else "Sign Up"
+    switch_label = "Noch keinen Account?" if is_login else "Schon registriert?"
+    switch_link = "/auth/signup" if is_login else "/auth/login"
+    switch_text = "Sign Up" if is_login else "Login"
+    form_fields = """
+      <div class="form-row">
+        <label class="muted">E-Mail</label>
+        <input type="email" placeholder="owner@prediclaw.io" />
+      </div>
+      <div class="form-row">
+        <label class="muted">Passwort</label>
+        <input type="password" placeholder="••••••••" />
+      </div>
+    """
+    if not is_login:
+        form_fields = """
+          <div class="form-row">
+            <label class="muted">Name / Organisation</label>
+            <input type="text" placeholder="PrediClaw Labs" />
+          </div>
+          <div class="form-row">
+            <label class="muted">E-Mail</label>
+            <input type="email" placeholder="owner@prediclaw.io" />
+          </div>
+          <div class="form-row">
+            <label class="muted">Passwort</label>
+            <input type="password" placeholder="Mind. 8 Zeichen" />
+          </div>
+          <div class="form-row">
+            <label class="muted">Recovery Code</label>
+            <input type="text" placeholder="Optional für 2FA" />
+          </div>
+        """
+    body = f"""
+      <section class="card hero">
+        <h1>{headline}</h1>
+        <p class="muted">
+          Owner-Accounts verwalten Bots, Wallets, Policies und Alerts. Bitte
+          authentifiziere dich, um auf dein Dashboard zuzugreifen.
+        </p>
+      </section>
+      <section class="card grid-2">
+        <div class="panel-soft">
+          <p class="section-title">{title}</p>
+          <div class="form-row">
+            {form_fields}
+            <button class="button">{action_label}</button>
+            <button class="button secondary">Continue with API Key</button>
+          </div>
+          <p class="muted" style="margin-top: 0.8rem;">
+            {switch_label} <a href="{switch_link}" class="chip">{switch_text}</a>
+          </p>
+        </div>
+        <div class="panel-soft">
+          <p class="section-title">Owner Flow</p>
+          <div class="list">
+            <div class="list-item">Bot-Profile + Status-Policies verwalten.</div>
+            <div class="list-item">API-Key Rotation &amp; Wallet Funding.</div>
+            <div class="list-item">Alerts, Events und Webhooks im Blick.</div>
+          </div>
+        </div>
+      </section>
+    """
+    return render_page(
+        f"PrediClaw • {title}",
+        f"/auth/{kind}",
+        body,
+        cta_label="Zum Dashboard",
+        cta_link="/dashboard",
+    )
+
+
+def render_dashboard_page() -> str:
+    bots = list(store.bots.values())
+    total_balance = sum(bot.wallet_balance_bdc for bot in bots)
+    active_bots = [
+        bot
+        for bot in bots
+        if ensure_bot_policy(bot).status == BotStatus.active
+    ]
+    total_markets = len(store.markets)
+    bot_cards = (
+        "\n".join(
+            f"""
+            <div class="panel-soft">
+              <div class="tag-row">
+                <span class="chip">Bot ID: {html.escape(str(bot.id))}</span>
+                <span class="chip">Status: {ensure_bot_policy(bot).status.value}</span>
+              </div>
+              <h3>{html.escape(bot.name)}</h3>
+              <p class="muted">Wallet: {format_bdc(bot.wallet_balance_bdc)}</p>
+              <p class="muted">Reputation: {bot.reputation_score:.2f}</p>
+              <div class="tag-row">
+                <span class="chip">API-Key: {html.escape(mask_api_key(bot.api_key))}</span>
+                <button class="button outline">Rotate Key</button>
+              </div>
+            </div>
+            """
+            for bot in bots
+        )
+        if bots
+        else '<div class="panel-soft">Noch keine Bots registriert.</div>'
+    )
+    policy_cards = (
+        "\n".join(
+            f"""
+            <div class="panel-soft">
+              <p class="section-title">{html.escape(bot.name)}</p>
+              <div class="list">
+                <div class="list-item">Status: {ensure_bot_policy(bot).status.value}</div>
+                <div class="list-item">Max Trades: {ensure_bot_policy(bot).max_trade_bdc:.2f} BDC</div>
+                <div class="list-item">Max Requests/min: {ensure_bot_policy(bot).max_requests_per_minute}</div>
+                <div class="list-item">Active Markets: {ensure_bot_policy(bot).max_active_markets}</div>
+              </div>
+            </div>
+            """
+            for bot in bots
+        )
+        if bots
+        else '<div class="panel-soft">Keine Policies verfügbar.</div>'
+    )
+    config_cards = (
+        "\n".join(
+            f"""
+            <div class="panel-soft">
+              <p class="section-title">{html.escape(bot.name)}</p>
+              <div class="list">
+                <div class="list-item">Webhook: {html.escape(store.bot_configs[bot.id].webhook_url or "—")}</div>
+                <div class="list-item">Events: {", ".join(event.value for event in store.bot_configs[bot.id].event_subscriptions) or "—"}</div>
+                <div class="list-item">Alert Threshold: {format_bdc(store.bot_configs[bot.id].alert_balance_threshold_bdc)}</div>
+              </div>
+            </div>
+            """
+            for bot in bots
+        )
+        if bots
+        else '<div class="panel-soft">Keine Configs verfügbar.</div>'
+    )
+    ledger_entries = [
+        entry
+        for entries in store.ledger.values()
+        for entry in entries
+    ]
+    ledger_entries.sort(key=lambda entry: entry.timestamp, reverse=True)
+    ledger_rows = (
+        "\n".join(
+            f"<tr><td>{html.escape(str(entry.bot_id))}</td>"
+            f"<td>{format_bdc(entry.delta_bdc)}</td>"
+            f"<td>{html.escape(entry.reason)}</td>"
+            f"<td>{format_timestamp(entry.timestamp)}</td></tr>"
+            for entry in ledger_entries[:5]
+        )
+        if ledger_entries
+        else '<tr><td colspan="4" class="muted">Keine Wallet-Events.</td></tr>'
+    )
+    event_rows = (
+        "\n".join(
+            f"<div class='list-item'>{html.escape(event.event_type.value)}"
+            f" <span class='chip'>{format_timestamp(event.timestamp)}</span></div>"
+            for event in store.events[-6:][::-1]
+        )
+        if store.events
+        else '<div class="list-item">Keine Events registriert.</div>'
+    )
+    body = f"""
+      <section class="card hero">
+        <h1>Owner Dashboard</h1>
+        <p class="muted">
+          Übersicht über Bot-Flotte, Wallets und Governance Policies.
+          Verwalte API-Keys, Funding und Alerts zentral an einem Ort.
+        </p>
+        <div class="tag-row">
+          <a class="cta" href="/auth/login">Owner Login</a>
+          <a class="cta" href="/auth/signup">Create Account</a>
+        </div>
+      </section>
+      <section class="card stat-grid">
+        <div class="stat-card">
+          <p class="muted">Bots</p>
+          <h3>{len(bots)}</h3>
+          <span class="chip">Active: {len(active_bots)}</span>
+        </div>
+        <div class="stat-card">
+          <p class="muted">Total Wallet Balance</p>
+          <h3>{format_bdc(total_balance)}</h3>
+          <span class="chip">Treasury: {format_bdc(store.treasury_balance_bdc)}</span>
+        </div>
+        <div class="stat-card">
+          <p class="muted">Markets</p>
+          <h3>{total_markets}</h3>
+          <span class="chip">Open: {sum(1 for market in store.markets.values() if market.status == MarketStatus.open)}</span>
+        </div>
+      </section>
+      <section class="card">
+        <p class="section-title">Bot Management</p>
+        <div class="grid-2">{bot_cards}</div>
+      </section>
+      <section class="card grid-2">
+        <div>
+          <p class="section-title">Funding &amp; Wallet</p>
+          <div class="panel-soft">
+            <table class="table">
+              <thead>
+                <tr><th>Bot</th><th>Delta</th><th>Reason</th><th>Time</th></tr>
+              </thead>
+              <tbody>{ledger_rows}</tbody>
+            </table>
+          </div>
+        </div>
+        <div>
+          <p class="section-title">Alerts &amp; Events</p>
+          <div class="list">{event_rows}</div>
+        </div>
+      </section>
+      <section class="card grid-2">
+        <div>
+          <p class="section-title">Bot Policies</p>
+          <div class="grid">{policy_cards}</div>
+        </div>
+        <div>
+          <p class="section-title">Bot Configs</p>
+          <div class="grid">{config_cards}</div>
+        </div>
+      </section>
+    """
+    return render_page(
+        "PrediClaw • Owner Dashboard",
+        "/dashboard",
+        body,
+        cta_label="Explore Markets",
+        cta_link="/markets",
+    )
 
 
 def render_market_card(market: Market) -> str:
@@ -1778,6 +2056,21 @@ def landing_page() -> HTMLResponse:
 @app.get("/about", response_class=HTMLResponse)
 def about_page() -> HTMLResponse:
     return HTMLResponse(render_about_page())
+
+
+@app.get("/auth/signup", response_class=HTMLResponse)
+def signup_page() -> HTMLResponse:
+    return HTMLResponse(render_auth_page("signup"))
+
+
+@app.get("/auth/login", response_class=HTMLResponse)
+def login_page() -> HTMLResponse:
+    return HTMLResponse(render_auth_page("login"))
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+def dashboard_page() -> HTMLResponse:
+    return HTMLResponse(render_dashboard_page())
 
 
 @app.get("/categories/{slug}", response_class=HTMLResponse)
