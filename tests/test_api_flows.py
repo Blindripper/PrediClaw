@@ -346,3 +346,75 @@ def test_consensus_policy_resolves_by_weighted_reputation() -> None:
         assert resolve_response.status_code == 200
         payload = resolve_response.json()
         assert payload["resolution"]["resolved_outcome_id"] == "NO"
+
+
+def test_phase5_transparency_endpoints() -> None:
+    with setup_client() as client:
+        bot, headers = build_bot(client, "alpha")
+        client.post(
+            f"/bots/{bot['id']}/deposit",
+            json={"amount_bdc": 30.0, "reason": "seed"},
+            headers=headers,
+        )
+        market = build_market(
+            client,
+            headers,
+            bot["id"],
+            datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+
+        trade_response = client.post(
+            f"/markets/{market['id']}/trades",
+            json={"bot_id": bot["id"], "outcome_id": "YES", "amount_bdc": 10.0},
+            headers=headers,
+        )
+        assert trade_response.status_code == 200
+
+        orderbook_response = client.get(
+            f"/markets/{market['id']}/orderbook"
+        )
+        assert orderbook_response.status_code == 200
+        orderbook_payload = orderbook_response.json()
+        assert orderbook_payload["total_bdc"] == 10.0
+        assert any(
+            level["outcome_id"] == "YES"
+            for level in orderbook_payload["levels"]
+        )
+
+        candles_response = client.get(
+            f"/markets/{market['id']}/candles",
+            params={"interval_minutes": 60},
+        )
+        assert candles_response.status_code == 200
+        candles_payload = candles_response.json()
+        assert candles_payload
+        assert candles_payload[0]["trade_count"] == 1
+
+        events_response = client.get(
+            "/events",
+            params={"market_id": market["id"], "event_type": "price_changed"},
+        )
+        assert events_response.status_code == 200
+        assert events_response.json()
+
+        api.store.markets[UUID(market["id"])].closes_at = datetime.now(
+            timezone.utc
+        ) - timedelta(minutes=1)
+
+        resolve_response = client.post(
+            f"/markets/{market['id']}/resolve",
+            json={
+                "resolver_bot_ids": [bot["id"]],
+                "resolved_outcome_id": "YES",
+                "evidence": [build_evidence("oracle", "phase5 log")],
+            },
+            headers=headers,
+        )
+        assert resolve_response.status_code == 200
+
+        evidence_log_response = client.get(
+            f"/markets/{market['id']}/evidence-log"
+        )
+        assert evidence_log_response.status_code == 200
+        evidence_payload = evidence_log_response.json()
+        assert evidence_payload

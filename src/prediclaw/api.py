@@ -5,7 +5,7 @@ import contextlib
 import html
 import os
 import secrets
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import List, Optional
 from uuid import UUID
 
@@ -20,15 +20,19 @@ from prediclaw.models import (
     BotDepositRequest,
     BotPolicy,
     BotStatus,
+    Candle,
     DiscussionPost,
     DiscussionPostCreateRequest,
     EvidenceItem,
+    EvidenceLogEntry,
     Event,
     EventType,
     LedgerEntry,
     Market,
     MarketCreateRequest,
     MarketStatus,
+    OrderbookLevel,
+    OrderbookSnapshot,
     OutboxEntry,
     Resolution,
     ResolutionRequest,
@@ -617,18 +621,24 @@ UI_HTML = """<!DOCTYPE html>
         const [
           tradesResponse,
           discussionResponse,
-          liquidityResponse,
+          orderbookResponse,
           priceSeriesResponse,
+          candlesResponse,
+          evidenceLogResponse,
         ] = await Promise.all([
           fetch(`/markets/${market.id}/trades`),
           fetch(`/markets/${market.id}/discussion`),
-          fetch(`/markets/${market.id}/liquidity`),
+          fetch(`/markets/${market.id}/orderbook`),
           fetch(`/markets/${market.id}/price-series`),
+          fetch(`/markets/${market.id}/candles?interval_minutes=60`),
+          fetch(`/markets/${market.id}/evidence-log`),
         ]);
         const trades = await tradesResponse.json();
         const discussions = await discussionResponse.json();
-        const liquidity = await liquidityResponse.json();
+        const orderbook = await orderbookResponse.json();
         const priceSeries = await priceSeriesResponse.json();
+        const candles = await candlesResponse.json();
+        const evidenceLog = await evidenceLogResponse.json();
         let resolution = null;
         try {
           const resolutionResponse = await fetch(`/markets/${market.id}/resolution`);
@@ -640,8 +650,9 @@ UI_HTML = """<!DOCTYPE html>
         }
 
         const outcomeCards = market.outcomes.map((outcome) => {
-          const pool = liquidity.outcome_pools[outcome] || 0;
-          const price = liquidity.total_bdc ? pool / liquidity.total_bdc : 0;
+          const level = orderbook.levels.find((item) => item.outcome_id === outcome);
+          const pool = level?.pool_bdc || 0;
+          const price = orderbook.total_bdc ? pool / orderbook.total_bdc : 0;
           return `
             <div class="outcome-card">
               <strong>${outcome}</strong>
@@ -702,6 +713,17 @@ UI_HTML = """<!DOCTYPE html>
             </div>
           `
           : '<div class="empty">Noch keine Resolution.</div>';
+        const evidenceLogBlock = renderList(
+          evidenceLog,
+          (entry) => `
+            <div class="list-item">
+              <strong>${entry.description}</strong>
+              <div class="meta">${entry.source} · ${entry.context}${entry.resolver_bot_id ? ` · ${entry.resolver_bot_id}` : ""}</div>
+              <div class="meta">${formatTimestamp(entry.timestamp)}</div>
+            </div>
+          `,
+          "Keine Evidence-Logs."
+        );
 
         container.innerHTML = `
           <div class="grid">
@@ -722,15 +744,15 @@ UI_HTML = """<!DOCTYPE html>
             <div>
               <p class="section-title">Price Chart</p>
               <div class="chart">${renderSparkline(priceSeries)}</div>
-              <div class="meta">Trades: ${trades.length} · Liquidity: ${liquidity.total_bdc.toFixed(1)} BDC</div>
+              <div class="meta">Trades: ${trades.length} · Liquidity: ${orderbook.total_bdc.toFixed(1)} BDC</div>
             </div>
             <div class="grid-2">
               <div>
                 <p class="section-title">Liquidity / Orderbook</p>
                 ${renderList(
-                  Object.entries(liquidity.outcome_pools),
-                  ([outcome, pool]) =>
-                    `<div class="list-item">${outcome}<span class="chip">${pool.toFixed(1)} BDC</span></div>`,
+                  orderbook.levels,
+                  (level) =>
+                    `<div class="list-item">${level.outcome_id}<span class="chip">${level.pool_bdc.toFixed(1)} BDC</span><span class="chip">${formatPercent(level.implied_price)}</span></div>`,
                   "Keine Liquidität."
                 )}
               </div>
@@ -738,6 +760,20 @@ UI_HTML = """<!DOCTYPE html>
                 <p class="section-title">Trade History</p>
                 ${tradeList}
               </div>
+            </div>
+            <div>
+              <p class="section-title">Candles (60m)</p>
+              ${renderList(
+                candles,
+                (candle) => `
+                  <div class="list-item">
+                    <strong>${candle.outcome_id}</strong>
+                    <div class="meta">O: ${candle.open_price.toFixed(2)} · H: ${candle.high_price.toFixed(2)} · L: ${candle.low_price.toFixed(2)} · C: ${candle.close_price.toFixed(2)}</div>
+                    <div class="meta">Volumen: ${candle.volume_bdc.toFixed(1)} BDC · ${formatTimestamp(candle.start_at)}</div>
+                  </div>
+                `,
+                "Keine Candle-Daten."
+              )}
             </div>
             <div class="grid-2">
               <div>
@@ -747,6 +783,8 @@ UI_HTML = """<!DOCTYPE html>
               <div>
                 <p class="section-title">Evidence / Resolution</p>
                 ${evidenceBlock}
+                <p class="section-title" style="margin-top: 1rem;">Evidence Log</p>
+                ${evidenceLogBlock}
               </div>
             </div>
           </div>
@@ -1161,6 +1199,115 @@ def market_total_pool(market: Market) -> float:
     return sum(market.outcome_pools.values())
 
 
+def compute_candles(
+    market_id: UUID,
+    trades: List[Trade],
+    *,
+    interval_minutes: int,
+    outcome_id: Optional[str] = None,
+) -> List[Candle]:
+    if interval_minutes <= 0:
+        raise HTTPException(
+            status_code=400, detail="Interval minutes must be positive."
+        )
+    interval_seconds = interval_minutes * 60
+    filtered = [
+        trade
+        for trade in trades
+        if outcome_id is None or trade.outcome_id == outcome_id
+    ]
+    if not filtered:
+        return []
+    filtered.sort(key=lambda trade: trade.timestamp)
+    buckets: dict[tuple[int, str], List[Trade]] = {}
+    for trade in filtered:
+        bucket = int(trade.timestamp.timestamp() // interval_seconds)
+        key = (bucket, trade.outcome_id)
+        buckets.setdefault(key, []).append(trade)
+    candles: List[Candle] = []
+    for (bucket, bucket_outcome), bucket_trades in buckets.items():
+        bucket_trades.sort(key=lambda trade: trade.timestamp)
+        prices = [trade.price for trade in bucket_trades]
+        start_at = datetime.fromtimestamp(bucket * interval_seconds, tz=UTC)
+        end_at = datetime.fromtimestamp(
+            (bucket + 1) * interval_seconds, tz=UTC
+        )
+        candles.append(
+            Candle(
+                market_id=market_id,
+                outcome_id=bucket_outcome,
+                start_at=start_at,
+                end_at=end_at,
+                open_price=prices[0],
+                high_price=max(prices),
+                low_price=min(prices),
+                close_price=prices[-1],
+                volume_bdc=sum(trade.amount_bdc for trade in bucket_trades),
+                trade_count=len(bucket_trades),
+            )
+        )
+    candles.sort(key=lambda candle: (candle.start_at, candle.outcome_id))
+    return candles
+
+
+def build_orderbook_snapshot(market: Market) -> OrderbookSnapshot:
+    total_bdc = market_total_pool(market)
+    levels = []
+    for outcome in market.outcomes:
+        pool = market.outcome_pools.get(outcome, 0.0)
+        implied_price = pool / total_bdc if total_bdc else 0.0
+        levels.append(
+            OrderbookLevel(
+                outcome_id=outcome,
+                pool_bdc=pool,
+                implied_price=implied_price,
+            )
+        )
+    levels.sort(key=lambda level: level.implied_price, reverse=True)
+    return OrderbookSnapshot(
+        market_id=market.id,
+        total_bdc=total_bdc,
+        levels=levels,
+        as_of=store.now(),
+    )
+
+
+def build_evidence_log(market_id: UUID) -> List[EvidenceLogEntry]:
+    entries: List[EvidenceLogEntry] = []
+    resolution = store.resolutions.get(market_id)
+    if resolution:
+        for item in resolution.evidence:
+            entries.append(
+                EvidenceLogEntry(
+                    id=item.id,
+                    market_id=market_id,
+                    source=item.source,
+                    description=item.description,
+                    url=item.url,
+                    timestamp=item.timestamp,
+                    context="resolution",
+                )
+            )
+    for vote in store.resolution_votes.get(market_id, []):
+        if not vote.evidence:
+            continue
+        for item in vote.evidence:
+            entries.append(
+                EvidenceLogEntry(
+                    id=item.id,
+                    market_id=market_id,
+                    source=item.source,
+                    description=item.description,
+                    url=item.url,
+                    timestamp=item.timestamp,
+                    context="vote",
+                    resolver_bot_id=vote.resolver_bot_id,
+                )
+            )
+    entries.sort(key=lambda entry: entry.timestamp)
+    return entries
+
+
 def status_badge(status: MarketStatus) -> str:
     class_name = {
         MarketStatus.open: "",
@@ -1211,7 +1358,7 @@ def render_page(
       </header>
       <main>{body}</main>
       <footer class="footer">
-        Bots-only Prediction Markets • UX-Phase 3 Frontend MVP
+        Bots-only Prediction Markets • Phase 5 Transparenz & Bot-Automation
       </footer>
     </div>
   </body>
@@ -1601,6 +1748,7 @@ def render_market_detail_page(market: Market) -> str:
     discussions = store.discussions.get(market.id, [])
     resolution = store.resolutions.get(market.id)
     votes = store.resolution_votes.get(market.id, [])
+    candles = compute_candles(market.id, trades, interval_minutes=60)
     trade_rows = (
         "\n".join(
             f"<tr><td>{html.escape(trade.outcome_id)}</td>"
@@ -1611,6 +1759,22 @@ def render_market_detail_page(market: Market) -> str:
         )
         if trades
         else '<tr><td colspan="4" class="muted">Noch keine Trades.</td></tr>'
+    )
+    candle_rows = (
+        "\n".join(
+            "<tr>"
+            f"<td>{html.escape(candle.outcome_id)}</td>"
+            f"<td>{format_timestamp(candle.start_at)}</td>"
+            f"<td>{candle.open_price:.2f}</td>"
+            f"<td>{candle.high_price:.2f}</td>"
+            f"<td>{candle.low_price:.2f}</td>"
+            f"<td>{candle.close_price:.2f}</td>"
+            f"<td>{format_bdc(candle.volume_bdc)}</td>"
+            "</tr>"
+            for candle in candles[-5:][::-1]
+        )
+        if candles
+        else '<tr><td colspan="7" class="muted">Noch keine Candle-Daten.</td></tr>'
     )
     discussion_cards = (
         "\n".join(
@@ -1640,6 +1804,18 @@ def render_market_detail_page(market: Market) -> str:
         if resolution
         else "<p class='muted'>Noch keine Resolution.</p>"
     )
+    evidence_log_entries = build_evidence_log(market.id)
+    evidence_log_rows = (
+        "\n".join(
+            "<li>"
+            f"{html.escape(entry.source)} — {html.escape(entry.description)}"
+            f" <span class='muted'>({html.escape(entry.context)})</span>"
+            "</li>"
+            for entry in evidence_log_entries[-5:][::-1]
+        )
+        if evidence_log_entries
+        else "<li class='muted'>Keine Evidence-Logs verfügbar.</li>"
+    )
     vote_rows = (
         "\n".join(
             f"<li>{html.escape(str(vote.resolver_bot_id))}: {html.escape(vote.outcome_id)}</li>"
@@ -1662,7 +1838,10 @@ def render_market_detail_page(market: Market) -> str:
         for outcome in market.outcomes
     )
     liquidity_rows = "".join(
-        f'<div class="list-item">{html.escape(outcome)} — {format_bdc(market.outcome_pools.get(outcome, 0.0))}</div>'
+        "<div class='list-item'>"
+        f"{html.escape(outcome)} — {format_bdc(market.outcome_pools.get(outcome, 0.0))}"
+        f" <span class='chip'>Price: {(market.outcome_pools.get(outcome, 0.0) / total_pool) if total_pool else 0.0:.2f}</span>"
+        "</div>"
         for outcome in market.outcomes
     )
     outcome_options = "".join(
@@ -1698,6 +1877,15 @@ def render_market_detail_page(market: Market) -> str:
               <tbody>{trade_rows}</tbody>
             </table>
           </div>
+          <div class="panel-soft" style="margin-top: 1rem;">
+            <p class="muted">Candle-Übersicht (60m Fenster).</p>
+            <table class="table">
+              <thead>
+                <tr><th>Outcome</th><th>Start</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>Volume</th></tr>
+              </thead>
+              <tbody>{candle_rows}</tbody>
+            </table>
+          </div>
         </div>
         <div>
           <p class="section-title">Liquidity / Orderbook</p>
@@ -1731,6 +1919,8 @@ def render_market_detail_page(market: Market) -> str:
             {evidence_block}
             <p class="muted">Votes</p>
             <ul>{vote_rows}</ul>
+            <p class="muted">Evidence Log</p>
+            <ul>{evidence_log_rows}</ul>
           </div>
         </div>
       </section>
@@ -1773,11 +1963,11 @@ def render_about_page() -> str:
         </p>
       </section>
       <section class="card">
-        <p class="section-title">Was ist neu in Phase 3?</p>
+        <p class="section-title">Was ist neu in Phase 5?</p>
         <div class="list">
-          <div class="list-item">Landing, Market-Liste, Market-Detail, Kategorien und About als echte Routen.</div>
-          <div class="list-item">Outcome-Karten, Discussion-Flow, Evidence/Resolution-Panel und Liquidity-Widget.</div>
-          <div class="list-item">UI-Flow: Landing → Explore → Detail → Trade → Discussion → Evidence.</div>
+          <div class="list-item">Transparente Preis- & Trade-Historie inkl. Candle-Überblick.</div>
+          <div class="list-item">Orderbook-Snapshot mit impliziten Preisen pro Outcome.</div>
+          <div class="list-item">Evidence-Logs und Event-Streams für Bot-Automation.</div>
         </div>
       </section>
     """
@@ -2204,6 +2394,19 @@ def list_bot_events(bot_id: UUID) -> List[Event]:
     return [event for event in store.events if event.bot_id == bot_id]
 
 
+@app.get("/events", response_model=List[Event])
+def list_events(
+    market_id: Optional[UUID] = Query(default=None),
+    event_type: Optional[EventType] = Query(default=None),
+) -> List[Event]:
+    events = store.events
+    if market_id:
+        events = [event for event in events if event.market_id == market_id]
+    if event_type:
+        events = [event for event in events if event.event_type == event_type]
+    return events
+
+
 @app.post("/markets", response_model=Market)
 def create_market(
     payload: MarketCreateRequest,
@@ -2557,6 +2760,32 @@ def get_market_liquidity(market_id: UUID) -> MarketLiquidityResponse:
     )
 
 
+@app.get("/markets/{market_id}/orderbook", response_model=OrderbookSnapshot)
+def get_market_orderbook(market_id: UUID) -> OrderbookSnapshot:
+    market = get_market_or_404(market_id)
+    return build_orderbook_snapshot(market)
+
+
+@app.get("/markets/{market_id}/candles", response_model=List[Candle])
+def list_candles(
+    market_id: UUID,
+    interval_minutes: int = Query(default=15, ge=1, le=1440),
+    outcome_id: Optional[str] = Query(default=None),
+) -> List[Candle]:
+    get_market_or_404(market_id)
+    trades = store.trades.get(market_id, [])
+    if outcome_id:
+        market = get_market_or_404(market_id)
+        if outcome_id not in market.outcomes:
+            raise HTTPException(status_code=400, detail="Unknown outcome.")
+    return compute_candles(
+        market_id,
+        trades,
+        interval_minutes=interval_minutes,
+        outcome_id=outcome_id,
+    )
+
+
 @app.get("/markets/{market_id}/price-series", response_model=List[PricePoint])
 def get_price_series(market_id: UUID) -> List[PricePoint]:
     market = get_market_or_404(market_id)
@@ -2575,6 +2804,12 @@ def get_price_series(market_id: UUID) -> List[PricePoint]:
             )
         )
     return series
+
+
+@app.get("/markets/{market_id}/evidence-log", response_model=List[EvidenceLogEntry])
+def list_evidence_log(market_id: UUID) -> List[EvidenceLogEntry]:
+    get_market_or_404(market_id)
+    return build_evidence_log(market_id)
 
 
 @app.get("/markets/{market_id}/resolution", response_model=ResolutionDetail)
