@@ -5,6 +5,9 @@ from pathlib import Path
 from uuid import uuid4
 
 from prediclaw.models import (
+    Alert,
+    AlertSeverity,
+    AlertType,
     Bot,
     BotConfig,
     BotPolicy,
@@ -143,6 +146,17 @@ def test_persistent_store_reloads_state(tmp_path: Path) -> None:
     store.treasury_config = TreasuryConfig(send_unpaid_to_treasury=True)
     store.save_treasury_state()
 
+    alert = Alert(
+        id=uuid4(),
+        bot_id=bot.id,
+        alert_type=AlertType.rate_limit,
+        severity=AlertSeverity.warning,
+        message="Test alert",
+        context={"limit": 1},
+        timestamp=now,
+    )
+    store.add_alert(alert)
+
     reloaded = PersistentStore(str(db_path))
 
     assert reloaded.bots[bot.id].name == "alpha"
@@ -159,3 +173,4 @@ def test_persistent_store_reloads_state(tmp_path: Path) -> None:
     assert any(entry.webhook_id == webhook.id for entry in reloaded.outbox)
     assert reloaded.treasury_ledger[0].id == treasury_entry.id
     assert reloaded.treasury_balance_bdc == 5.0
+    assert reloaded.alerts[0].id == alert.id

@@ -418,3 +418,77 @@ def test_phase5_transparency_endpoints() -> None:
         assert evidence_log_response.status_code == 200
         evidence_payload = evidence_log_response.json()
         assert evidence_payload
+
+
+def test_phase6_quota_and_stake_alerts() -> None:
+    with setup_client() as client:
+        bot, headers = build_bot(client, "alpha")
+        policy_payload = {
+            "status": "active",
+            "max_requests_per_minute": api.MAX_BOT_REQUESTS_PER_MINUTE,
+            "max_active_markets": 5,
+            "max_trade_bdc": 500.0,
+            "max_markets_per_day": 1,
+            "max_resolutions_per_day": 1,
+            "min_balance_bdc_for_market": 20.0,
+            "min_reputation_score_for_market": 0.0,
+            "min_balance_bdc_for_resolution": 10.0,
+            "min_reputation_score_for_resolution": 0.0,
+            "stake_bdc_market": 5.0,
+            "stake_bdc_resolution": 2.0,
+            "notes": "phase6",
+        }
+        policy_response = client.put(
+            f"/bots/{bot['id']}/policy",
+            json=policy_payload,
+            headers=headers,
+        )
+        assert policy_response.status_code == 200
+
+        market_payload = {
+            "creator_bot_id": bot["id"],
+            "title": "ETH > 3k?",
+            "description": "Stake gate",
+            "category": "crypto",
+            "outcomes": ["YES", "NO"],
+            "closes_at": (
+                datetime.now(timezone.utc) + timedelta(hours=1)
+            ).isoformat(),
+            "resolver_policy": "single",
+        }
+
+        blocked_response = client.post(
+            "/markets", json=market_payload, headers=headers
+        )
+        assert blocked_response.status_code == 403
+
+        alerts_response = client.get(f"/bots/{bot['id']}/alerts")
+        assert alerts_response.status_code == 200
+        assert any(
+            alert["alert_type"] == "stake_requirement"
+            for alert in alerts_response.json()
+        )
+
+        deposit_response = client.post(
+            f"/bots/{bot['id']}/deposit",
+            json={"amount_bdc": 30.0, "reason": "stake seed"},
+            headers=headers,
+        )
+        assert deposit_response.status_code == 200
+
+        market_response = client.post(
+            "/markets", json=market_payload, headers=headers
+        )
+        assert market_response.status_code == 200
+
+        quota_response = client.post(
+            "/markets", json=market_payload, headers=headers
+        )
+        assert quota_response.status_code == 429
+
+        alerts_response = client.get(f"/bots/{bot['id']}/alerts")
+        assert alerts_response.status_code == 200
+        assert any(
+            alert["alert_type"] == "quota_exceeded"
+            for alert in alerts_response.json()
+        )

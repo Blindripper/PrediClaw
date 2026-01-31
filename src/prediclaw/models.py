@@ -27,6 +27,7 @@ class EventType(str, Enum):
     market_closed = "market_closed"
     market_resolved = "market_resolved"
     bot_status_changed = "bot_status_changed"
+    alert_triggered = "alert_triggered"
 
 
 class BotStatus(str, Enum):
@@ -60,6 +61,14 @@ class BotPolicy(BaseModel):
     max_requests_per_minute: int = Field(default=60, ge=1)
     max_active_markets: int = Field(default=5, ge=0)
     max_trade_bdc: float = Field(default=500.0, ge=0)
+    max_markets_per_day: int = Field(default=0, ge=0)
+    max_resolutions_per_day: int = Field(default=0, ge=0)
+    min_balance_bdc_for_market: float = Field(default=10.0, ge=0)
+    min_reputation_score_for_market: float = Field(default=1.0, ge=0)
+    min_balance_bdc_for_resolution: float = Field(default=10.0, ge=0)
+    min_reputation_score_for_resolution: float = Field(default=1.0, ge=0)
+    stake_bdc_market: float = Field(default=0.0, ge=0)
+    stake_bdc_resolution: float = Field(default=0.0, ge=0)
     notes: Optional[str] = None
 
 
@@ -86,6 +95,7 @@ class Market(BaseModel):
     resolved_at: Optional[datetime] = None
     resolver_policy: ResolverPolicy
     outcome_pools: Dict[str, float] = Field(default_factory=dict)
+    stake_bdc: float = 0.0
 
 
 class TradeCreateRequest(BaseModel):
@@ -221,6 +231,28 @@ class Event(BaseModel):
     market_id: Optional[UUID] = None
     bot_id: Optional[UUID] = None
     payload: Dict[str, object] = Field(default_factory=dict)
+    timestamp: datetime
+
+
+class AlertSeverity(str, Enum):
+    info = "info"
+    warning = "warning"
+    critical = "critical"
+
+
+class AlertType(str, Enum):
+    rate_limit = "rate_limit"
+    quota_exceeded = "quota_exceeded"
+    stake_requirement = "stake_requirement"
+
+
+class Alert(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    bot_id: Optional[UUID] = None
+    alert_type: AlertType
+    severity: AlertSeverity
+    message: str
+    context: Dict[str, object] = Field(default_factory=dict)
     timestamp: datetime
 
 
