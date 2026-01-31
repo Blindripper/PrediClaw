@@ -77,7 +77,7 @@ class MarketCreateRequest(BaseModel):
     title: str
     description: str
     category: str
-    outcomes: List[str] = Field(min_items=2)
+    outcomes: List[str] = Field(min_length=2)
     closes_at: datetime
     resolver_policy: ResolverPolicy = ResolverPolicy.single
 
