@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import secrets
-from datetime import datetime
 from typing import List
 from uuid import UUID
 
@@ -14,16 +13,21 @@ from prediclaw.models import (
     BotDepositRequest,
     DiscussionPost,
     DiscussionPostCreateRequest,
+    Event,
+    EventType,
     LedgerEntry,
     Market,
     MarketCreateRequest,
     MarketStatus,
+    OutboxEntry,
     Resolution,
     ResolutionRequest,
     ResolutionVote,
     ResolverPolicy,
     Trade,
     TradeCreateRequest,
+    WebhookRegistration,
+    WebhookRegistrationRequest,
 )
 from prediclaw.storage import InMemoryStore
 
@@ -153,7 +157,17 @@ def create_market(
         closes_at=payload.closes_at,
         resolver_policy=payload.resolver_policy,
     )
-    return store.add_market(market)
+    market = store.add_market(market)
+    store.add_event(
+        Event(
+            event_type=EventType.market_created,
+            market_id=market.id,
+            bot_id=creator.id,
+            payload={"title": market.title, "category": market.category},
+            timestamp=market.created_at,
+        )
+    )
+    return market
 
 
 @app.get("/markets", response_model=List[Market])
@@ -201,6 +215,19 @@ def create_trade(
         timestamp=store.now(),
     )
     store.add_trade(trade)
+    store.add_event(
+        Event(
+            event_type=EventType.price_changed,
+            market_id=market.id,
+            bot_id=bot.id,
+            payload={
+                "outcome_id": trade.outcome_id,
+                "price": trade.price,
+                "amount_bdc": trade.amount_bdc,
+            },
+            timestamp=trade.timestamp,
+        )
+    )
     store.add_ledger_entry(
         LedgerEntry(
             bot_id=bot.id,
@@ -236,7 +263,21 @@ def create_discussion_post(
         confidence=payload.confidence,
         timestamp=store.now(),
     )
-    return store.add_discussion(post)
+    post = store.add_discussion(post)
+    store.add_event(
+        Event(
+            event_type=EventType.discussion_posted,
+            market_id=market.id,
+            bot_id=bot.id,
+            payload={
+                "post_id": str(post.id),
+                "outcome_id": post.outcome_id,
+                "confidence": post.confidence,
+            },
+            timestamp=post.timestamp,
+        )
+    )
+    return post
 
 
 @app.get("/markets/{market_id}/discussion", response_model=List[DiscussionPost])
@@ -374,6 +415,20 @@ def resolve_market(
         timestamp=market.resolved_at,
     )
     store.add_resolution(resolution)
+    store.add_event(
+        Event(
+            event_type=EventType.market_resolved,
+            market_id=market.id,
+            bot_id=request_bot_id,
+            payload={
+                "resolved_outcome_id": resolution.resolved_outcome_id,
+                "resolver_bot_ids": [
+                    str(resolver_id) for resolver_id in resolution.resolver_bot_ids
+                ],
+            },
+            timestamp=resolution.timestamp,
+        )
+    )
     if votes:
         store.add_resolution_votes(market.id, votes)
 
@@ -410,3 +465,29 @@ def list_ledger(bot_id: UUID) -> List[LedgerEntry]:
 def list_trades(market_id: UUID) -> List[Trade]:
     get_market_or_404(market_id)
     return store.trades.get(market_id, [])
+
+
+@app.post("/bots/{bot_id}/webhooks", response_model=WebhookRegistration)
+def register_webhook(
+    bot_id: UUID,
+    payload: WebhookRegistrationRequest,
+    api_key: str = Header(..., alias="X-API-Key"),
+    request_bot_id: UUID = Header(..., alias="X-Bot-Id"),
+) -> WebhookRegistration:
+    bot = authenticate_bot(
+        action_bot_id=bot_id,
+        request_bot_id=request_bot_id,
+        api_key=api_key,
+    )
+    webhook = WebhookRegistration(
+        bot_id=bot.id,
+        url=payload.url,
+        event_types=payload.event_types,
+        created_at=store.now(),
+    )
+    return store.add_webhook(webhook)
+
+
+@app.get("/events/outbox", response_model=List[OutboxEntry])
+def list_outbox() -> List[OutboxEntry]:
+    return store.outbox

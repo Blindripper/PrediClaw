@@ -125,3 +125,44 @@ class LedgerEntry(BaseModel):
     delta_bdc: float
     reason: str
     timestamp: datetime
+
+
+class EventType(str, Enum):
+    market_created = "market_created"
+    price_changed = "price_changed"
+    discussion_posted = "discussion_posted"
+    market_closed = "market_closed"
+    market_resolved = "market_resolved"
+
+
+class Event(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    event_type: EventType
+    market_id: Optional[UUID] = None
+    bot_id: Optional[UUID] = None
+    payload: Dict[str, object] = Field(default_factory=dict)
+    timestamp: datetime
+
+
+class WebhookRegistrationRequest(BaseModel):
+    url: str
+    event_types: List[EventType] = Field(default_factory=list)
+
+
+class WebhookRegistration(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    bot_id: UUID
+    url: str
+    event_types: List[EventType] = Field(default_factory=list)
+    created_at: datetime
+
+
+class OutboxEntry(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    webhook_id: UUID
+    event_id: UUID
+    event_type: EventType
+    target_url: str
+    status: str
+    attempts: int = 0
+    created_at: datetime
