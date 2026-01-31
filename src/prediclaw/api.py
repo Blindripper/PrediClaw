@@ -20,6 +20,8 @@ from prediclaw.models import (
     MarketStatus,
     Resolution,
     ResolutionRequest,
+    ResolutionVote,
+    ResolverPolicy,
     Trade,
     TradeCreateRequest,
 )
@@ -254,8 +256,10 @@ def resolve_market(
     market = get_market_or_404(market_id)
     if market.status == MarketStatus.resolved:
         raise HTTPException(status_code=409, detail="Market already resolved.")
-    if payload.resolved_outcome_id not in market.outcomes:
-        raise HTTPException(status_code=400, detail="Unknown outcome.")
+    if len(set(payload.resolver_bot_ids)) != len(payload.resolver_bot_ids):
+        raise HTTPException(status_code=400, detail="Duplicate resolver IDs provided.")
+    if not payload.resolver_bot_ids:
+        raise HTTPException(status_code=400, detail="At least one resolver is required.")
     if request_bot_id not in payload.resolver_bot_ids:
         raise HTTPException(status_code=403, detail="Resolver not authorized.")
     authenticate_bot(
@@ -264,26 +268,121 @@ def resolve_market(
         api_key=api_key,
         require_min_stake=True,
     )
-    for resolver_id in payload.resolver_bot_ids:
-        get_bot_or_404(resolver_id)
+
+    resolver_bots = {
+        resolver_id: get_bot_or_404(resolver_id)
+        for resolver_id in payload.resolver_bot_ids
+    }
+
+    resolved_outcome_id: str
+    votes: List[ResolutionVote] = []
+
+    if market.resolver_policy == ResolverPolicy.single:
+        if len(payload.resolver_bot_ids) != 1:
+            raise HTTPException(
+                status_code=400, detail="Single resolver policy requires one resolver."
+            )
+        if not payload.resolved_outcome_id:
+            raise HTTPException(
+                status_code=400, detail="Resolved outcome is required for single policy."
+            )
+        if payload.resolved_outcome_id not in market.outcomes:
+            raise HTTPException(status_code=400, detail="Unknown outcome.")
+        resolved_outcome_id = payload.resolved_outcome_id
+    else:
+        if len(payload.resolver_bot_ids) < 2:
+            raise HTTPException(
+                status_code=400,
+                detail="Majority and consensus policies require multiple resolvers.",
+            )
+        if not payload.votes:
+            raise HTTPException(
+                status_code=400, detail="Votes are required for this resolver policy."
+            )
+        if len(set(vote.resolver_bot_id for vote in payload.votes)) != len(
+            payload.votes
+        ):
+            raise HTTPException(
+                status_code=400, detail="Duplicate resolver votes provided."
+            )
+        missing_votes = set(payload.resolver_bot_ids) - {
+            vote.resolver_bot_id for vote in payload.votes
+        }
+        if missing_votes:
+            raise HTTPException(
+                status_code=400,
+                detail="Votes are required from all listed resolvers.",
+            )
+        for vote in payload.votes:
+            if vote.resolver_bot_id not in resolver_bots:
+                raise HTTPException(
+                    status_code=400, detail="Vote provided by unknown resolver."
+                )
+            if vote.outcome_id not in market.outcomes:
+                raise HTTPException(status_code=400, detail="Unknown outcome.")
+        votes = payload.votes
+        if market.resolver_policy == ResolverPolicy.majority:
+            outcome_counts: dict[str, int] = {}
+            for vote in votes:
+                outcome_counts[vote.outcome_id] = (
+                    outcome_counts.get(vote.outcome_id, 0) + 1
+                )
+            resolved_outcome_id, max_count = max(
+                outcome_counts.items(), key=lambda item: item[1]
+            )
+            if max_count <= len(votes) / 2:
+                raise HTTPException(
+                    status_code=409, detail="No majority consensus reached."
+                )
+        else:
+            outcome_weights: dict[str, float] = {}
+            total_weight = 0.0
+            for vote in votes:
+                weight = resolver_bots[vote.resolver_bot_id].reputation_score
+                total_weight += weight
+                outcome_weights[vote.outcome_id] = (
+                    outcome_weights.get(vote.outcome_id, 0.0) + weight
+                )
+            if total_weight <= 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Consensus policy requires positive resolver reputation.",
+                )
+            resolved_outcome_id, max_weight = max(
+                outcome_weights.items(), key=lambda item: item[1]
+            )
+            if max_weight <= total_weight / 2:
+                raise HTTPException(
+                    status_code=409, detail="No consensus reached."
+                )
+        if (
+            payload.resolved_outcome_id
+            and payload.resolved_outcome_id != resolved_outcome_id
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="Resolved outcome does not match resolver votes.",
+            )
 
     market.status = MarketStatus.resolved
     market.resolved_at = store.now()
     resolution = Resolution(
         market_id=market.id,
-        resolved_outcome_id=payload.resolved_outcome_id,
+        resolved_outcome_id=resolved_outcome_id,
         resolver_bot_ids=payload.resolver_bot_ids,
         evidence=payload.evidence,
         timestamp=market.resolved_at,
     )
     store.add_resolution(resolution)
+    if votes:
+        store.add_resolution_votes(market.id, votes)
 
     total_pool = sum(market.outcome_pools.values())
-    winning_pool = market.outcome_pools.get(payload.resolved_outcome_id, 0.0)
+    winning_pool = market.outcome_pools.get(resolved_outcome_id, 0.0)
     payouts: List[LedgerEntry] = []
     if winning_pool > 0:
         for trade in store.trades.get(market.id, []):
-            if trade.outcome_id != payload.resolved_outcome_id:
+            if trade.outcome_id != resolved_outcome_id:
                 continue
             share = trade.amount_bdc / winning_pool
             payout_amount = share * total_pool
