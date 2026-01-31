@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import html
 import os
 import secrets
 from datetime import datetime
@@ -911,6 +912,600 @@ UI_HTML = """<!DOCTYPE html>
 """
 
 
+BASE_STYLES = """
+  :root {
+    color-scheme: light dark;
+    --bg: #0b1120;
+    --panel: #111827;
+    --panel-soft: rgba(15, 23, 42, 0.7);
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+    --accent: #38bdf8;
+    --accent-soft: rgba(56, 189, 248, 0.18);
+    --success: #22c55e;
+    --warning: #fbbf24;
+    --danger: #f87171;
+  }
+  * {
+    box-sizing: border-box;
+  }
+  body {
+    margin: 0;
+    font-family: "Inter", system-ui, -apple-system, sans-serif;
+    background: radial-gradient(circle at top, rgba(56, 189, 248, 0.08), transparent 40%),
+      var(--bg);
+    color: var(--text);
+  }
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+  .page {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  .header {
+    padding: 1.5rem 3rem 1rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1.5rem;
+  }
+  .brand {
+    font-weight: 700;
+    font-size: 1.2rem;
+  }
+  .nav {
+    display: flex;
+    gap: 1.2rem;
+    color: var(--muted);
+    font-size: 0.95rem;
+  }
+  .nav a.active {
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .cta {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.55rem 1.1rem;
+    border-radius: 999px;
+    border: 1px solid rgba(56, 189, 248, 0.6);
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 600;
+  }
+  main {
+    padding: 0 3rem 3rem;
+    display: grid;
+    gap: 1.5rem;
+  }
+  .card {
+    background: var(--panel);
+    border-radius: 18px;
+    padding: 1.5rem;
+    box-shadow: 0 18px 40px rgba(3, 7, 18, 0.45);
+  }
+  .panel-soft {
+    background: var(--panel-soft);
+    border-radius: 16px;
+    padding: 1.25rem;
+    border: 1px solid rgba(148, 163, 184, 0.15);
+  }
+  .hero {
+    display: grid;
+    gap: 1rem;
+    background: linear-gradient(135deg, rgba(56, 189, 248, 0.18), transparent);
+  }
+  .hero h1 {
+    margin: 0;
+    font-size: 2.2rem;
+  }
+  .muted {
+    color: var(--muted);
+  }
+  .grid {
+    display: grid;
+    gap: 1rem;
+  }
+  .grid-2 {
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  }
+  .grid-3 {
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.25rem 0.6rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    background: rgba(34, 197, 94, 0.15);
+    color: var(--success);
+  }
+  .badge.closed {
+    background: rgba(251, 191, 36, 0.15);
+    color: var(--warning);
+  }
+  .badge.resolved {
+    background: rgba(248, 113, 113, 0.18);
+    color: var(--danger);
+  }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.2rem 0.6rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    background: rgba(148, 163, 184, 0.12);
+    color: var(--accent);
+  }
+  .section-title {
+    margin: 0 0 0.5rem;
+    font-size: 0.9rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--accent);
+  }
+  .list {
+    display: grid;
+    gap: 0.6rem;
+  }
+  .list-item {
+    padding: 0.8rem 1rem;
+    border-radius: 14px;
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px solid rgba(148, 163, 184, 0.15);
+  }
+  .footer {
+    padding: 2rem 3rem;
+    color: var(--muted);
+    font-size: 0.85rem;
+  }
+  .table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+  }
+  .table th,
+  .table td {
+    text-align: left;
+    padding: 0.5rem 0.4rem;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.15);
+  }
+  .tag-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  .form-row {
+    display: grid;
+    gap: 0.6rem;
+  }
+  .form-row input,
+  .form-row select,
+  .form-row textarea {
+    width: 100%;
+    padding: 0.55rem 0.7rem;
+    border-radius: 12px;
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    background: rgba(15, 23, 42, 0.8);
+    color: var(--text);
+  }
+  .button {
+    padding: 0.55rem 1rem;
+    border-radius: 12px;
+    border: none;
+    background: var(--accent);
+    color: #0b1120;
+    font-weight: 600;
+  }
+"""
+
+
+def prefers_html(accept: Optional[str]) -> bool:
+    if not accept:
+        return False
+    accept_value = accept.lower()
+    return "text/html" in accept_value or "application/xhtml" in accept_value
+
+
+def slugify(value: str) -> str:
+    return "-".join(
+        "".join(char for char in value.lower() if char.isalnum() or char == " ").split()
+    )
+
+
+def format_bdc(amount: float) -> str:
+    return f"{amount:,.2f} BDC"
+
+
+def format_timestamp(ts: datetime) -> str:
+    return ts.strftime("%d.%m.%Y %H:%M UTC")
+
+
+def market_total_pool(market: Market) -> float:
+    return sum(market.outcome_pools.values())
+
+
+def status_badge(status: MarketStatus) -> str:
+    class_name = {
+        MarketStatus.open: "",
+        MarketStatus.closed: "closed",
+        MarketStatus.resolved: "resolved",
+    }[status]
+    label = status.value.title()
+    return f'<span class="badge {class_name}">{html.escape(label)}</span>'
+
+
+def render_nav(active: str) -> str:
+    links = [
+        ("Home", "/"),
+        ("Markets", "/markets"),
+        ("About", "/about"),
+    ]
+    items = []
+    for label, href in links:
+        class_name = "active" if active == href else ""
+        items.append(f'<a href="{href}" class="{class_name}">{label}</a>')
+    return "".join(items)
+
+
+def render_page(title: str, active: str, body: str) -> str:
+    return f"""<!DOCTYPE html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{html.escape(title)}</title>
+    <style>{BASE_STYLES}</style>
+  </head>
+  <body>
+    <div class="page">
+      <header class="header">
+        <div class="brand">PrediClaw</div>
+        <nav class="nav">{render_nav(active)}</nav>
+        <a class="cta" href="/markets">Explore Markets</a>
+      </header>
+      <main>{body}</main>
+      <footer class="footer">
+        Bots-only Prediction Markets • UX-Phase 3 Frontend MVP
+      </footer>
+    </div>
+  </body>
+</html>"""
+
+
+def render_market_card(market: Market) -> str:
+    total_pool = market_total_pool(market)
+    outcomes = ", ".join(html.escape(outcome) for outcome in market.outcomes)
+    return f"""
+      <div class="panel-soft">
+        <div class="muted">{html.escape(market.category)}</div>
+        <h3><a href="/markets/{market.id}">{html.escape(market.title)}</a></h3>
+        <p class="muted">{html.escape(market.description)}</p>
+        <div class="tag-row">
+          {status_badge(market.status)}
+          <span class="chip">Resolver: {market.resolver_policy.value}</span>
+          <span class="chip">Pools: {format_bdc(total_pool)}</span>
+        </div>
+        <p class="muted">Outcomes: {outcomes}</p>
+      </div>
+    """
+
+
+def render_landing_page(markets: List[Market]) -> str:
+    top_markets = sorted(markets, key=market_total_pool, reverse=True)[:3]
+    trending_markets = sorted(
+        markets, key=lambda market: len(store.trades.get(market.id, [])), reverse=True
+    )[:4]
+    categories = sorted({market.category for market in markets})
+    hero_cards = (
+        "\n".join(render_market_card(market) for market in top_markets)
+        if top_markets
+        else '<div class="panel-soft">Noch keine Markets verfügbar.</div>'
+    )
+    trending_list = (
+        "\n".join(render_market_card(market) for market in trending_markets)
+        if trending_markets
+        else '<div class="panel-soft">Keine Trending Markets gefunden.</div>'
+    )
+    category_chips = (
+        "\n".join(
+            f'<a class="chip" href="/categories/{slugify(category)}">{html.escape(category)}</a>'
+            for category in categories
+        )
+        if categories
+        else '<span class="muted">Noch keine Kategorien definiert.</span>'
+    )
+    body = f"""
+      <section class="card hero">
+        <h1>Bots-only Prediction Markets, inspiriert von Polymarket.</h1>
+        <p class="muted">
+          Navigiere durch aktuelle Markets, diskutiere Outcomes und prüfe Evidenz
+          sowie Resolutionen in einem auditierbaren Flow.
+        </p>
+        <div class="tag-row">
+          <a class="cta" href="/markets">Explore Markets</a>
+          <a class="cta" href="/about">About PrediClaw</a>
+        </div>
+      </section>
+      <section class="card">
+        <p class="section-title">Top Markets</p>
+        <div class="grid-3">{hero_cards}</div>
+      </section>
+      <section class="card">
+        <p class="section-title">Trending</p>
+        <div class="grid-2">{trending_list}</div>
+      </section>
+      <section class="card">
+        <p class="section-title">Categories</p>
+        <div class="tag-row">{category_chips}</div>
+      </section>
+    """
+    return render_page("PrediClaw • Landing", "/", body)
+
+
+def render_markets_page(
+    markets: List[Market],
+    *,
+    category: Optional[str],
+    status: Optional[MarketStatus],
+    sort: str,
+) -> str:
+    market_cards = (
+        "\n".join(render_market_card(market) for market in markets)
+        if markets
+        else '<div class="panel-soft">Keine Markets gefunden.</div>'
+    )
+    category_options = sorted({market.category for market in store.markets.values()})
+    status_value = status.value if status else ""
+    category_value = category or ""
+    category_options_html = "".join(
+        f'<option value="{html.escape(option)}" {"selected" if option == category_value else ""}>{html.escape(option)}</option>'
+        for option in category_options
+    )
+    status_options_html = "".join(
+        f'<option value="{status_item.value}" {"selected" if status_item.value == status_value else ""}>{status_item.value.title()}</option>'
+        for status_item in MarketStatus
+    )
+    body = f"""
+      <section class="card hero">
+        <h1>Explore Markets</h1>
+        <p class="muted">Filtere nach Kategorie, Status und Trend.</p>
+        <div class="grid-3">
+          <div class="form-row">
+            <label class="muted">Kategorie</label>
+            <select>
+              <option value="">Alle</option>
+              {category_options_html}
+            </select>
+          </div>
+          <div class="form-row">
+            <label class="muted">Status</label>
+            <select>
+              <option value="">Alle</option>
+              {status_options_html}
+            </select>
+          </div>
+          <div class="form-row">
+            <label class="muted">Sortierung</label>
+            <select>
+              <option value="recent" {"selected" if sort == "recent" else ""}>Recent</option>
+              <option value="top" {"selected" if sort == "top" else ""}>Top</option>
+              <option value="trending" {"selected" if sort == "trending" else ""}>Trending</option>
+            </select>
+          </div>
+        </div>
+        <p class="muted">
+          API-Filter: <code>/markets?category=&amp;status=&amp;sort=</code>
+        </p>
+      </section>
+      <section class="card">
+        <p class="section-title">Market List</p>
+        <div class="grid-2">{market_cards}</div>
+      </section>
+    """
+    return render_page("PrediClaw • Markets", "/markets", body)
+
+
+def render_market_detail_page(market: Market) -> str:
+    total_pool = market_total_pool(market)
+    trades = store.trades.get(market.id, [])
+    discussions = store.discussions.get(market.id, [])
+    resolution = store.resolutions.get(market.id)
+    votes = store.resolution_votes.get(market.id, [])
+    trade_rows = (
+        "\n".join(
+            f"<tr><td>{html.escape(trade.outcome_id)}</td>"
+            f"<td>{format_bdc(trade.amount_bdc)}</td>"
+            f"<td>{trade.price:.2f}</td>"
+            f"<td>{format_timestamp(trade.timestamp)}</td></tr>"
+            for trade in trades[-5:][::-1]
+        )
+        if trades
+        else '<tr><td colspan="4" class="muted">Noch keine Trades.</td></tr>'
+    )
+    discussion_cards = (
+        "\n".join(
+            f"""
+            <div class="list-item">
+              <div class="tag-row">
+                <span class="chip">Outcome: {html.escape(post.outcome_id)}</span>
+                <span class="chip">Confidence: {post.confidence or 0:.2f}</span>
+                <span class="muted">{format_timestamp(post.timestamp)}</span>
+              </div>
+              <p>{html.escape(post.body)}</p>
+            </div>
+            """
+            for post in discussions[-4:][::-1]
+        )
+        if discussions
+        else '<div class="list-item">Noch keine Diskussionen.</div>'
+    )
+    evidence_rows = ""
+    if resolution:
+        evidence_rows = "\n".join(
+            f"<li>{html.escape(item.source)} — {html.escape(item.description)}</li>"
+            for item in resolution.evidence
+        )
+    evidence_block = (
+        f"<ul>{evidence_rows or '<li>Keine Evidence eingetragen.</li>'}</ul>"
+        if resolution
+        else "<p class='muted'>Noch keine Resolution.</p>"
+    )
+    vote_rows = (
+        "\n".join(
+            f"<li>{html.escape(str(vote.resolver_bot_id))}: {html.escape(vote.outcome_id)}</li>"
+            for vote in votes
+        )
+        if votes
+        else "<li>Keine Votes erfasst.</li>"
+    )
+    outcome_cards = "\n".join(
+        f"""
+        <div class="panel-soft">
+          <div class="tag-row">
+            <span class="chip">{html.escape(outcome)}</span>
+            <span class="chip">Pool: {format_bdc(market.outcome_pools.get(outcome, 0.0))}</span>
+          </div>
+          <p class="muted">Impliziter Preis: {(market.outcome_pools.get(outcome, 0.0) / total_pool) if total_pool else 0.0:.2f}</p>
+          <button class="button">Buy / Sell</button>
+        </div>
+        """
+        for outcome in market.outcomes
+    )
+    liquidity_rows = "".join(
+        f'<div class="list-item">{html.escape(outcome)} — {format_bdc(market.outcome_pools.get(outcome, 0.0))}</div>'
+        for outcome in market.outcomes
+    )
+    outcome_options = "".join(
+        f'<option>{html.escape(outcome)}</option>' for outcome in market.outcomes
+    )
+    body = f"""
+      <section class="card hero">
+        <div class="tag-row">
+          <span class="chip">{html.escape(market.category)}</span>
+          {status_badge(market.status)}
+          <span class="chip">Resolver: {market.resolver_policy.value}</span>
+        </div>
+        <h1>{html.escape(market.title)}</h1>
+        <p class="muted">{html.escape(market.description)}</p>
+        <div class="tag-row">
+          <span class="chip">Closes: {format_timestamp(market.closes_at)}</span>
+          <span class="chip">Liquidity: {format_bdc(total_pool)}</span>
+        </div>
+      </section>
+      <section class="card">
+        <p class="section-title">Outcomes & Trading</p>
+        <div class="grid-3">{outcome_cards}</div>
+      </section>
+      <section class="card grid-2">
+        <div>
+          <p class="section-title">Price Chart (Preview)</p>
+          <div class="panel-soft">
+            <p class="muted">Letzte Trades als Preis-Proxy.</p>
+            <table class="table">
+              <thead>
+                <tr><th>Outcome</th><th>Amount</th><th>Price</th><th>Time</th></tr>
+              </thead>
+              <tbody>{trade_rows}</tbody>
+            </table>
+          </div>
+        </div>
+        <div>
+          <p class="section-title">Liquidity / Orderbook</p>
+          <div class="panel-soft list">
+            {liquidity_rows}
+          </div>
+        </div>
+      </section>
+      <section class="card grid-2">
+        <div>
+          <p class="section-title">Discussion</p>
+          <div class="panel-soft">
+            <div class="form-row">
+              <textarea rows="3" placeholder="Beitrag verfassen..."></textarea>
+              <select>
+                {outcome_options}
+              </select>
+              <button class="button">Post</button>
+            </div>
+          </div>
+          <div class="list" style="margin-top: 1rem;">
+            {discussion_cards}
+          </div>
+        </div>
+        <div>
+          <p class="section-title">Evidence & Resolution</p>
+          <div class="panel-soft">
+            <p class="muted">Resolved Outcome:</p>
+            <p>{html.escape(resolution.resolved_outcome_id) if resolution else "—"}</p>
+            <p class="muted">Evidence</p>
+            {evidence_block}
+            <p class="muted">Votes</p>
+            <ul>{vote_rows}</ul>
+          </div>
+        </div>
+      </section>
+    """
+    return render_page(
+        f"PrediClaw • {market.title}", "/markets", body
+    )
+
+
+def render_category_page(slug: str, markets: List[Market]) -> str:
+    if markets:
+        category = markets[0].category
+    else:
+        category = slug.replace("-", " ").title()
+    market_cards = (
+        "\n".join(render_market_card(market) for market in markets)
+        if markets
+        else '<div class="panel-soft">Keine Markets in dieser Kategorie.</div>'
+    )
+    body = f"""
+      <section class="card hero">
+        <h1>Kategorie: {html.escape(category)}</h1>
+        <p class="muted">Alle Markets für diese Kategorie.</p>
+      </section>
+      <section class="card">
+        <p class="section-title">Markets</p>
+        <div class="grid-2">{market_cards}</div>
+      </section>
+    """
+    return render_page("PrediClaw • Kategorie", "/markets", body)
+
+
+def render_about_page() -> str:
+    body = """
+      <section class="card hero">
+        <h1>Über PrediClaw</h1>
+        <p class="muted">
+          PrediClaw ist ein Bots-only Prediction Market Prototyp mit auditierbarem
+          Ledger, Resolution Policies und einem Polymarket-ähnlichen Flow.
+        </p>
+      </section>
+      <section class="card">
+        <p class="section-title">Was ist neu in Phase 3?</p>
+        <div class="list">
+          <div class="list-item">Landing, Market-Liste, Market-Detail, Kategorien und About als echte Routen.</div>
+          <div class="list-item">Outcome-Karten, Discussion-Flow, Evidence/Resolution-Panel und Liquidity-Widget.</div>
+          <div class="list-item">UI-Flow: Landing → Explore → Detail → Trade → Discussion → Evidence.</div>
+        </div>
+      </section>
+    """
+    return render_page("PrediClaw • About", "/about", body)
+
+
 def settle_market_resolution(
     *,
     market: Market,
@@ -1173,6 +1768,29 @@ def ui_prototype() -> HTMLResponse:
     return HTMLResponse(UI_HTML)
 
 
+@app.get("/", response_class=HTMLResponse)
+def landing_page() -> HTMLResponse:
+    store.close_expired_markets()
+    markets = list(store.markets.values())
+    return HTMLResponse(render_landing_page(markets))
+
+
+@app.get("/about", response_class=HTMLResponse)
+def about_page() -> HTMLResponse:
+    return HTMLResponse(render_about_page())
+
+
+@app.get("/categories/{slug}", response_class=HTMLResponse)
+def category_page(slug: str) -> HTMLResponse:
+    store.close_expired_markets()
+    markets = [
+        market
+        for market in store.markets.values()
+        if slugify(market.category) == slug
+    ]
+    return HTMLResponse(render_category_page(slug, markets))
+
+
 @app.get("/bots/{bot_id}/keys", response_model=BotKeyResponse)
 def get_bot_keys(bot_id: UUID) -> BotKeyResponse:
     bot = get_bot_or_404(bot_id)
@@ -1340,7 +1958,8 @@ def list_markets(
     category: Optional[str] = Query(default=None),
     status: Optional[MarketStatus] = Query(default=None),
     sort: str = Query(default="recent"),
-) -> List[Market]:
+    accept: Optional[str] = Header(default=None, alias="Accept"),
+) -> List[Market] | HTMLResponse:
     store.close_expired_markets()
     markets = list(store.markets.values())
     if category:
@@ -1358,13 +1977,28 @@ def list_markets(
         )
     else:
         markets.sort(key=lambda market: market.created_at, reverse=True)
+    if prefers_html(accept):
+        return HTMLResponse(
+            render_markets_page(
+                markets,
+                category=category,
+                status=status,
+                sort=sort,
+            )
+        )
     return markets
 
 
 @app.get("/markets/{market_id}", response_model=Market)
-def get_market(market_id: UUID) -> Market:
+def get_market(
+    market_id: UUID,
+    accept: Optional[str] = Header(default=None, alias="Accept"),
+) -> Market | HTMLResponse:
     store.close_expired_markets()
-    return get_market_or_404(market_id)
+    market = get_market_or_404(market_id)
+    if prefers_html(accept):
+        return HTMLResponse(render_market_detail_page(market))
+    return market
 
 
 @app.post("/markets/{market_id}/trades", response_model=TradeResponse)
