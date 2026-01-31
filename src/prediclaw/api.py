@@ -1699,7 +1699,7 @@ def build_webhook_payload(entry: OutboxEntry) -> dict[str, object]:
         "id": str(entry.id),
         "webhook_id": str(entry.webhook_id),
         "event": event.model_dump(mode="json") if event else None,
-        "event_type": entry.event_type,
+        "event_type": entry.event_type.value,
         "delivered_at": store.now(),
     }
 
