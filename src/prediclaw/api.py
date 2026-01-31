@@ -2,18 +2,21 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import html
-import hmac
-import hashlib
-import json
-import os
-import secrets
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+import hashlib
+import hmac
+import html
+import json
+import logging
+import os
 from pathlib import Path
+import secrets
+import time
 from typing import List, Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from fastapi import FastAPI, Header, HTTPException, Query
+from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -129,16 +132,53 @@ class BotPosition(BaseModel):
     average_price: float
 
 
+LOG_LEVEL = os.getenv("PREDICLAW_LOG_LEVEL", "INFO").upper()
+LOG_FORMAT = os.getenv("PREDICLAW_LOG_FORMAT", "text").lower()
 DATA_DIR = Path(os.getenv("PREDICLAW_DATA_DIR", str(Path.cwd() / "data")))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = os.getenv("PREDICLAW_DB_PATH", str(DATA_DIR / "prediclaw.db"))
 store = PersistentStore(DB_PATH)
 UI_DIR = Path(__file__).resolve().parent / "ui"
 UI_INDEX_PATH = UI_DIR / "index.html"
-MAX_BOT_REQUESTS_PER_MINUTE = 60
+MAX_BOT_REQUESTS_PER_MINUTE = int(
+    os.getenv("PREDICLAW_DEFAULT_MAX_REQUESTS_PER_MINUTE", "60")
+)
+DEFAULT_MAX_ACTIVE_MARKETS = int(
+    os.getenv("PREDICLAW_DEFAULT_MAX_ACTIVE_MARKETS", "5")
+)
+DEFAULT_MAX_TRADE_BDC = float(os.getenv("PREDICLAW_DEFAULT_MAX_TRADE_BDC", "500"))
+DEFAULT_MAX_MARKETS_PER_DAY = int(
+    os.getenv("PREDICLAW_DEFAULT_MAX_MARKETS_PER_DAY", "0")
+)
+DEFAULT_MAX_RESOLUTIONS_PER_DAY = int(
+    os.getenv("PREDICLAW_DEFAULT_MAX_RESOLUTIONS_PER_DAY", "0")
+)
+MIN_BOT_BALANCE_BDC = float(os.getenv("PREDICLAW_MIN_BOT_BALANCE_BDC", "10"))
+MIN_BOT_REPUTATION_SCORE = float(
+    os.getenv("PREDICLAW_MIN_BOT_REPUTATION_SCORE", "1")
+)
+DEFAULT_MIN_BALANCE_FOR_MARKET = float(
+    os.getenv("PREDICLAW_MIN_BALANCE_FOR_MARKET", str(MIN_BOT_BALANCE_BDC))
+)
+DEFAULT_MIN_REPUTATION_FOR_MARKET = float(
+    os.getenv("PREDICLAW_MIN_REPUTATION_FOR_MARKET", str(MIN_BOT_REPUTATION_SCORE))
+)
+DEFAULT_MIN_BALANCE_FOR_RESOLUTION = float(
+    os.getenv("PREDICLAW_MIN_BALANCE_FOR_RESOLUTION", str(MIN_BOT_BALANCE_BDC))
+)
+DEFAULT_MIN_REPUTATION_FOR_RESOLUTION = float(
+    os.getenv(
+        "PREDICLAW_MIN_REPUTATION_FOR_RESOLUTION",
+        str(MIN_BOT_REPUTATION_SCORE),
+    )
+)
+DEFAULT_STAKE_BDC_MARKET = float(
+    os.getenv("PREDICLAW_DEFAULT_STAKE_BDC_MARKET", "0")
+)
+DEFAULT_STAKE_BDC_RESOLUTION = float(
+    os.getenv("PREDICLAW_DEFAULT_STAKE_BDC_RESOLUTION", "0")
+)
 RATE_LIMIT_WINDOW_SECONDS = 60
-MIN_BOT_BALANCE_BDC = 10.0
-MIN_BOT_REPUTATION_SCORE = 1.0
 MARKET_LIFECYCLE_POLL_SECONDS = int(
     os.getenv("PREDICLAW_LIFECYCLE_POLL_SECONDS", "30")
 )
@@ -163,8 +203,64 @@ OPENCLAW_CHALLENGE_TTL_MINUTES = int(
 )
 
 
+class JsonFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        payload = {
+            "timestamp": datetime.now(tz=UTC).isoformat(),
+            "level": record.levelname,
+            "message": record.getMessage(),
+            "logger": record.name,
+        }
+        for key in ("request_id", "method", "path", "status_code", "duration_ms"):
+            if hasattr(record, key):
+                payload[key] = getattr(record, key)
+        if record.exc_info:
+            payload["exception"] = self.formatException(record.exc_info)
+        return json.dumps(payload, ensure_ascii=False)
+
+
+def configure_logging() -> None:
+    handler = logging.StreamHandler()
+    if LOG_FORMAT == "json":
+        handler.setFormatter(JsonFormatter())
+    else:
+        handler.setFormatter(
+            logging.Formatter(
+                "%(asctime)s %(levelname)s %(name)s %(message)s",
+                datefmt="%Y-%m-%dT%H:%M:%S%z",
+            )
+        )
+    root_logger = logging.getLogger()
+    root_logger.handlers.clear()
+    root_logger.addHandler(handler)
+    root_logger.setLevel(LOG_LEVEL)
+
+
+configure_logging()
+logger = logging.getLogger("prediclaw")
+
+
+@dataclass
+class RequestMetrics:
+    total_requests: int = 0
+    total_errors: int = 0
+    webhook_attempts: int = 0
+    webhook_failures: int = 0
+    last_webhook_error: Optional[str] = None
+
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
+    app.state.started_at = store.now()
+    app.state.metrics = RequestMetrics()
+    if os.getenv("PREDICLAW_ENV", "").lower() == "production":
+        if not os.getenv("PREDICLAW_DATA_DIR"):
+            logger.warning(
+                "PREDICLAW_DATA_DIR is not set; defaulting to local ./data.",
+            )
+        if not os.getenv("PREDICLAW_DB_PATH"):
+            logger.warning(
+                "PREDICLAW_DB_PATH is not set; defaulting to ./data/prediclaw.db.",
+            )
     lifecycle_task = asyncio.create_task(market_lifecycle_job())
     app.state.market_lifecycle_task = lifecycle_task
     webhook_task = None
@@ -185,6 +281,44 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="PrediClaw API", version="0.1.0", lifespan=lifespan)
 app.mount("/ui/static", StaticFiles(directory=UI_DIR / "static"), name="ui-static")
+
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):  # type: ignore[no-untyped-def]
+    request_id = request.headers.get("X-Request-Id") or str(uuid4())
+    start = time.perf_counter()
+    metrics: RequestMetrics = request.app.state.metrics
+    metrics.total_requests += 1
+    try:
+        response = await call_next(request)
+    except Exception:
+        metrics.total_errors += 1
+        duration_ms = (time.perf_counter() - start) * 1000
+        logger.exception(
+            "request_failed",
+            extra={
+                "request_id": request_id,
+                "method": request.method,
+                "path": request.url.path,
+                "duration_ms": round(duration_ms, 2),
+            },
+        )
+        raise
+    duration_ms = (time.perf_counter() - start) * 1000
+    if response.status_code >= 500:
+        metrics.total_errors += 1
+    logger.info(
+        "request_completed",
+        extra={
+            "request_id": request_id,
+            "method": request.method,
+            "path": request.url.path,
+            "status_code": response.status_code,
+            "duration_ms": round(duration_ms, 2),
+        },
+    )
+    response.headers["X-Request-Id"] = request_id
+    return response
 
 
 @app.get("/healthz")
@@ -211,6 +345,19 @@ def readiness() -> dict:
         "status": "ready",
         "components": {"database": "ok"},
         "timestamp": datetime.now(tz=UTC).isoformat(),
+    }
+
+
+@app.get("/metrics")
+def metrics() -> dict:
+    metrics_state: RequestMetrics = app.state.metrics
+    return {
+        "uptime_seconds": int((store.now() - app.state.started_at).total_seconds()),
+        "requests_total": metrics_state.total_requests,
+        "errors_total": metrics_state.total_errors,
+        "webhook_attempts_total": metrics_state.webhook_attempts,
+        "webhook_failures_total": metrics_state.webhook_failures,
+        "last_webhook_error": metrics_state.last_webhook_error,
     }
 
 
@@ -1572,6 +1719,7 @@ async def webhook_delivery_job() -> None:
             cleanup_expired_sessions()
             cleanup_openclaw_challenges()
             now = store.now()
+            metrics: RequestMetrics = app.state.metrics
             for entry in list(store.outbox):
                 if entry.status not in {"pending", "retrying"}:
                     continue
@@ -1594,6 +1742,7 @@ async def webhook_delivery_job() -> None:
                     else ""
                 )
                 entry.last_attempt_at = now
+                metrics.webhook_attempts += 1
                 try:
                     response = await client.post(
                         entry.target_url,
@@ -1617,6 +1766,8 @@ async def webhook_delivery_job() -> None:
                     entry.next_attempt_at = now + timedelta(seconds=backoff)
                     if entry.attempts >= WEBHOOK_MAX_ATTEMPTS:
                         entry.status = "failed"
+                        metrics.webhook_failures += 1
+                        metrics.last_webhook_error = entry.last_error
                 store.save_outbox_entry(entry)
             await asyncio.sleep(2)
 
@@ -1780,10 +1931,27 @@ def get_market_or_404(market_id: UUID) -> Market:
     return market
 
 
+def default_bot_policy(status: BotStatus) -> BotPolicy:
+    return BotPolicy(
+        status=status,
+        max_requests_per_minute=MAX_BOT_REQUESTS_PER_MINUTE,
+        max_active_markets=DEFAULT_MAX_ACTIVE_MARKETS,
+        max_trade_bdc=DEFAULT_MAX_TRADE_BDC,
+        max_markets_per_day=DEFAULT_MAX_MARKETS_PER_DAY,
+        max_resolutions_per_day=DEFAULT_MAX_RESOLUTIONS_PER_DAY,
+        min_balance_bdc_for_market=DEFAULT_MIN_BALANCE_FOR_MARKET,
+        min_reputation_score_for_market=DEFAULT_MIN_REPUTATION_FOR_MARKET,
+        min_balance_bdc_for_resolution=DEFAULT_MIN_BALANCE_FOR_RESOLUTION,
+        min_reputation_score_for_resolution=DEFAULT_MIN_REPUTATION_FOR_RESOLUTION,
+        stake_bdc_market=DEFAULT_STAKE_BDC_MARKET,
+        stake_bdc_resolution=DEFAULT_STAKE_BDC_RESOLUTION,
+    )
+
+
 def ensure_bot_policy(bot: Bot) -> BotPolicy:
     policy = store.bot_policies.get(bot.id)
     if not policy:
-        policy = BotPolicy(status=bot.status)
+        policy = default_bot_policy(bot.status)
         store.bot_policies[bot.id] = policy
     return policy
 
@@ -1986,6 +2154,7 @@ def create_bot(payload: BotCreateRequest) -> Bot:
         api_key=secrets.token_urlsafe(32),
     )
     bot = store.add_bot(bot)
+    store.save_bot_policy(bot.id, default_bot_policy(bot.status))
     ensure_agent_profile(bot)
     return bot
 
@@ -2101,6 +2270,7 @@ def create_owner_bot(
         api_key=secrets.token_urlsafe(32),
     )
     bot = store.add_bot(bot)
+    store.save_bot_policy(bot.id, default_bot_policy(bot.status))
     ensure_agent_profile(bot)
     return bot
 

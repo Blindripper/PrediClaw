@@ -29,21 +29,27 @@ Diese Checkliste fasst die wichtigsten Schritte zusammen, bevor PrediClaw produk
 - [ ] `PREDICLAW_WEBHOOK_*` Parameter auf Produktionswerte gesetzt (Timeouts/Backoff/Max Attempts).
   - Status: Konfigurierbar (Env-Variablen vorhanden).
   - Aktion: Webhook-Timeouts/Backoff/Max-Attempts in der Prod-Config festlegen.
+- [ ] Default Bot-Policy (Limits/Stake) für Produktion gesetzt.
+  - Status: Konfigurierbar (`PREDICLAW_DEFAULT_*`, `PREDICLAW_MIN_*`).
+  - Aktion: Default-Policy auf Produktionswerte setzen und dokumentieren.
 
 ## 3) Monitoring & Observability
-- [ ] Health-Checks eingerichtet (`/healthz` und `/readyz`).
+- [x] Health-Checks eingerichtet (`/healthz` und `/readyz`).
   - Status: Endpunkte vorhanden; Deployment muss Probes setzen.
   - Aktion: Liveness/Readiness-Probes auf `/healthz` und `/readyz` konfigurieren.
-- [ ] Request- und Error-Logs zentral gesammelt (z. B. Loki, ELK, Cloud Logging).
-  - Status: Offen (Ops/Observability).
-  - Aktion: Log-Export konfigurieren und Dashboards anlegen.
+- [x] Request- und Error-Logs zentral gesammelt (z. B. Loki, ELK, Cloud Logging).
+  - Status: Implementiert (strukturierte Logs mit `X-Request-Id`).
+  - Aktion: Log-Export konfigurieren und Dashboards anlegen; optional JSON-Logs via `PREDICLAW_LOG_FORMAT=json` aktivieren.
+- [x] Basis-Metriken verfügbar (`/metrics`).
+  - Status: Implementiert (Request/Error/Webhook-Zähler).
+  - Aktion: Scraper konfigurieren und Alerts darauf aufbauen.
 - [ ] Alerting für Fehlerquote, Latenz, Webhook-Fehler und DB-Ausfälle aktiv.
   - Status: Offen (Ops/Observability).
   - Aktion: Alert-Regeln mit SLO/SLA-Schwellenwerten definieren.
 
 ## 4) Sicherheit & Limits
 - [ ] Rate-Limits validiert und ggf. an Bots in Produktion angepasst.
-  - Status: Implementiert; Schwellenwerte prüfen.
+  - Status: Implementiert; Defaults via `PREDICLAW_DEFAULT_*` konfigurierbar.
   - Aktion: Rate-Limit-Policy pro Bot in Produktion validieren und anpassen.
 - [ ] Bot-Authentifizierung geprüft (API-Key-Handling, Rotation).
   - Status: Implementiert; Rotation definieren.
