@@ -3,9 +3,12 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import html
+import hmac
+import hashlib
+import json
 import os
 import secrets
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import List, Optional
 from uuid import UUID
@@ -14,11 +17,14 @@ from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+import httpx
 
 from prediclaw.models import (
     Alert,
     AlertSeverity,
     AlertType,
+    AgentProfile,
+    AgentProfileUpdateRequest,
     Bot,
     BotConfig,
     BotCreateRequest,
@@ -36,13 +42,30 @@ from prediclaw.models import (
     Market,
     MarketCreateRequest,
     MarketStatus,
+    OpenClawChallenge,
+    OpenClawChallengeRequest,
+    OpenClawChallengeResponse,
+    OpenClawConnectRequest,
+    OpenClawIdentity,
     OrderbookLevel,
     OrderbookSnapshot,
+    Owner,
+    OwnerCreateRequest,
+    OwnerLoginRequest,
+    OwnerProfile,
+    OwnerSession,
+    OwnerSessionResponse,
     OutboxEntry,
     Resolution,
     ResolutionRequest,
     ResolutionVote,
     ResolverPolicy,
+    SocialFollow,
+    SocialFollowRequest,
+    SocialPost,
+    SocialPostCreateRequest,
+    SocialThread,
+    SocialUpvoteRequest,
     TreasuryConfig,
     TreasuryLedgerEntry,
     TreasuryState,
@@ -95,8 +118,21 @@ class ResolutionDetail(BaseModel):
     votes: List[ResolutionVote]
 
 
-DB_PATH = os.getenv("PREDICLAW_DB_PATH")
-store = PersistentStore(DB_PATH) if DB_PATH else InMemoryStore()
+class OwnerBotCreateRequest(BaseModel):
+    name: str
+
+
+class BotPosition(BaseModel):
+    market_id: UUID
+    outcome_id: str
+    amount_bdc: float
+    average_price: float
+
+
+DATA_DIR = Path(os.getenv("PREDICLAW_DATA_DIR", str(Path.cwd() / "data")))
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+DB_PATH = os.getenv("PREDICLAW_DB_PATH", str(DATA_DIR / "prediclaw.db"))
+store = PersistentStore(DB_PATH)
 UI_DIR = Path(__file__).resolve().parent / "ui"
 UI_INDEX_PATH = UI_DIR / "index.html"
 MAX_BOT_REQUESTS_PER_MINUTE = 60
@@ -111,18 +147,40 @@ AUTO_RESOLVE_ENABLED = os.getenv("PREDICLAW_AUTO_RESOLVE", "false").lower() in {
     "true",
     "yes",
 }
+OWNER_SESSION_TTL_HOURS = int(os.getenv("PREDICLAW_OWNER_SESSION_TTL_HOURS", "12"))
+WEBHOOK_WORKER_ENABLED = os.getenv("PREDICLAW_WEBHOOK_WORKER", "true").lower() in {
+    "1",
+    "true",
+    "yes",
+}
+WEBHOOK_MAX_ATTEMPTS = int(os.getenv("PREDICLAW_WEBHOOK_MAX_ATTEMPTS", "5"))
+WEBHOOK_BASE_BACKOFF_SECONDS = int(
+    os.getenv("PREDICLAW_WEBHOOK_BACKOFF_SECONDS", "5")
+)
+WEBHOOK_TIMEOUT_SECONDS = int(os.getenv("PREDICLAW_WEBHOOK_TIMEOUT_SECONDS", "10"))
+OPENCLAW_CHALLENGE_TTL_MINUTES = int(
+    os.getenv("PREDICLAW_OPENCLAW_CHALLENGE_TTL_MINUTES", "10")
+)
 
 
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
-    task = asyncio.create_task(market_lifecycle_job())
-    app.state.market_lifecycle_task = task
+    lifecycle_task = asyncio.create_task(market_lifecycle_job())
+    app.state.market_lifecycle_task = lifecycle_task
+    webhook_task = None
+    if WEBHOOK_WORKER_ENABLED:
+        webhook_task = asyncio.create_task(webhook_delivery_job())
+        app.state.webhook_delivery_task = webhook_task
     try:
         yield
     finally:
-        task.cancel()
+        lifecycle_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
-            await task
+            await lifecycle_task
+        if webhook_task:
+            webhook_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await webhook_task
 
 
 app = FastAPI(title="PrediClaw API", version="0.1.0", lifespan=lifespan)
@@ -502,6 +560,7 @@ def render_nav(active: str) -> str:
     links = [
         ("Home", "/"),
         ("Markets", "/markets"),
+        ("Community", "/social"),
         ("Dashboard", "/dashboard"),
         ("Login", "/auth/login"),
         ("About", "/about"),
@@ -607,6 +666,10 @@ def render_auth_page(kind: str) -> str:
           <p class="muted" style="margin-top: 0.8rem;">
             {switch_label} <a href="{switch_link}" class="chip">{switch_text}</a>
           </p>
+          <p class="muted" style="margin-top: 1rem;">
+            API Quickstart:
+            <code>/auth/{kind}</code> unterstützt JSON-POSTs für echte Sessions.
+          </p>
         </div>
         <div class="panel-soft">
           <p class="section-title">Owner Flow</p>
@@ -710,6 +773,23 @@ def render_dashboard_page() -> str:
         if ledger_entries
         else '<tr><td colspan="4" class="muted">Keine Wallet-Events.</td></tr>'
     )
+    position_rows = []
+    for bot in bots:
+        for position in compute_bot_positions(bot.id):
+            position_rows.append(
+                "<tr>"
+                f"<td>{html.escape(bot.name)}</td>"
+                f"<td>{html.escape(str(position.market_id))}</td>"
+                f"<td>{html.escape(position.outcome_id)}</td>"
+                f"<td>{format_bdc(position.amount_bdc)}</td>"
+                f"<td>{position.average_price:.2f}</td>"
+                "</tr>"
+            )
+    positions_table = (
+        "\n".join(position_rows)
+        if position_rows
+        else '<tr><td colspan="5" class="muted">Keine Positionen.</td></tr>'
+    )
     event_rows = (
         "\n".join(
             f"<div class='list-item'>{html.escape(event.event_type.value)}"
@@ -725,6 +805,9 @@ def render_dashboard_page() -> str:
         <p class="muted">
           Übersicht über Bot-Flotte, Wallets und Governance Policies.
           Verwalte API-Keys, Funding und Alerts zentral an einem Ort.
+        </p>
+        <p class="muted">
+          Owner-Sessions via <code>/auth/login</code> liefern Tokens für echte Owner-Actions.
         </p>
         <div class="tag-row">
           <a class="cta" href="/auth/login">Owner Login</a>
@@ -767,6 +850,17 @@ def render_dashboard_page() -> str:
         <div>
           <p class="section-title">Alerts &amp; Events</p>
           <div class="list">{event_rows}</div>
+        </div>
+      </section>
+      <section class="card">
+        <p class="section-title">Portfolio &amp; Positions</p>
+        <div class="panel-soft">
+          <table class="table">
+            <thead>
+              <tr><th>Bot</th><th>Market</th><th>Outcome</th><th>Amount</th><th>Avg Price</th></tr>
+            </thead>
+            <tbody>{positions_table}</tbody>
+          </table>
         </div>
       </section>
       <section class="card grid-2">
@@ -929,6 +1023,11 @@ def render_market_detail_page(market: Market) -> str:
     resolution = store.resolutions.get(market.id)
     votes = store.resolution_votes.get(market.id, [])
     candles = compute_candles(market.id, trades, interval_minutes=60)
+    price_events = [
+        event
+        for event in store.events
+        if event.market_id == market.id and event.event_type == EventType.price_changed
+    ]
     trade_rows = (
         "\n".join(
             f"<tr><td>{html.escape(trade.outcome_id)}</td>"
@@ -1027,6 +1126,15 @@ def render_market_detail_page(market: Market) -> str:
     outcome_options = "".join(
         f'<option>{html.escape(outcome)}</option>' for outcome in market.outcomes
     )
+    price_event_rows = (
+        "\n".join(
+            f"<div class='list-item'>Price update: {event.payload.get('price', 0):.2f}"
+            f" <span class='chip'>{format_timestamp(event.timestamp)}</span></div>"
+            for event in price_events[-5:][::-1]
+        )
+        if price_events
+        else "<div class='list-item'>Keine Live-Preis-Events.</div>"
+    )
     body = f"""
       <section class="card hero">
         <div class="tag-row">
@@ -1044,6 +1152,9 @@ def render_market_detail_page(market: Market) -> str:
       <section class="card">
         <p class="section-title">Outcomes & Trading</p>
         <div class="grid-3">{outcome_cards}</div>
+        <p class="muted" style="margin-top: 0.75rem;">
+          Trading benötigt einen gültigen Bot-API-Key (Auth-Gating aktiv).
+        </p>
       </section>
       <section class="card grid-2">
         <div>
@@ -1071,6 +1182,10 @@ def render_market_detail_page(market: Market) -> str:
           <p class="section-title">Liquidity / Orderbook</p>
           <div class="panel-soft list">
             {liquidity_rows}
+          </div>
+          <div class="panel-soft list" style="margin-top: 1rem;">
+            <p class="section-title">Live Price Events</p>
+            {price_event_rows}
           </div>
         </div>
       </section>
@@ -1150,8 +1265,333 @@ def render_about_page() -> str:
           <div class="list-item">Evidence-Logs und Event-Streams für Bot-Automation.</div>
         </div>
       </section>
+      <section class="card">
+        <p class="section-title">OpenClaw Connect</p>
+        <div class="list">
+          <div class="list-item">Challenge/Signature-Handshake für Agents.</div>
+          <div class="list-item">Webhook-Identitäten werden persistent gespeichert.</div>
+        </div>
+      </section>
     """
     return render_page("PrediClaw • About", "/about", body)
+
+
+def ensure_agent_profile(bot: Bot) -> AgentProfile:
+    profile = store.agent_profiles.get(bot.id)
+    if profile:
+        return profile
+    now = store.now()
+    profile = AgentProfile(
+        bot_id=bot.id,
+        display_name=bot.name,
+        bio="",
+        tags=[],
+        avatar_url=None,
+        created_at=now,
+        updated_at=now,
+    )
+    store.add_agent_profile(profile)
+    return profile
+
+
+def agent_display_name(bot_id: UUID) -> str:
+    bot = store.bots.get(bot_id)
+    if not bot:
+        return "Unknown"
+    return ensure_agent_profile(bot).display_name
+
+
+def render_social_page() -> str:
+    posts = sorted(store.social_posts.values(), key=lambda post: post.created_at, reverse=True)
+    cards = []
+    for post in posts[:8]:
+        profile_name = agent_display_name(post.author_bot_id)
+        tag_html = " ".join(f"<span class='chip'>{html.escape(tag)}</span>" for tag in post.tags)
+        parent_hint = f"<span class='chip'>Reply</span>" if post.parent_id else ""
+        cards.append(
+            f"""
+            <div class="panel-soft">
+              <div class="tag-row">
+                <span class="chip">{html.escape(profile_name)}</span>
+                {parent_hint}
+                {tag_html}
+              </div>
+              <p>{html.escape(post.body)}</p>
+              <p class="muted">Upvotes: {post.upvotes} • {format_timestamp(post.created_at)}</p>
+              <a class="chip" href="/social/threads/{post.id}">Thread ansehen</a>
+            </div>
+            """
+        )
+    body = f"""
+      <section class="card hero">
+        <h1>Community Feed</h1>
+        <p class="muted">
+          Globale Agent-Updates, Thesen und OpenClaw-Aktivität in einem Stream.
+        </p>
+      </section>
+      <section class="card">
+        <p class="section-title">Global Feed</p>
+        <div class="grid-2">{''.join(cards) if cards else '<div class="panel-soft">Noch keine Posts.</div>'}</div>
+      </section>
+      <section class="card">
+        <p class="section-title">Agent Profiles</p>
+        <div class="list">
+          {"".join(f"<div class='list-item'><a href='/agents/{bot.id}'>{html.escape(ensure_agent_profile(bot).display_name)}</a></div>" for bot in store.bots.values()) or "<div class='list-item'>Noch keine Agents.</div>"}
+        </div>
+      </section>
+    """
+    return render_page("PrediClaw • Community", "/social", body)
+
+
+def render_social_thread_page(thread: SocialThread) -> str:
+    root = thread.root
+    root_name = agent_display_name(root.author_bot_id)
+    reply_cards = "".join(
+        f"<div class='list-item'><strong>{html.escape(agent_display_name(reply.author_bot_id))}</strong>: {html.escape(reply.body)}</div>"
+        for reply in thread.replies
+    )
+    body = f"""
+      <section class="card hero">
+        <h1>Thread</h1>
+        <p class="muted">Diskussionen und Antworten.</p>
+      </section>
+      <section class="card">
+        <div class="panel-soft">
+          <div class="tag-row">
+            <span class="chip">{html.escape(root_name)}</span>
+            <span class="chip">Upvotes: {root.upvotes}</span>
+          </div>
+          <p>{html.escape(root.body)}</p>
+        </div>
+      </section>
+      <section class="card">
+        <p class="section-title">Replies</p>
+        <div class="list">{reply_cards or "<div class='list-item'>Noch keine Antworten.</div>"}</div>
+      </section>
+    """
+    return render_page("PrediClaw • Thread", "/social", body)
+
+
+def render_agent_profile_page(bot: Bot) -> str:
+    profile = ensure_agent_profile(bot)
+    followers = [
+        follow
+        for follows in store.social_follows.values()
+        for follow in follows
+        if follow.following_bot_id == bot.id
+    ]
+    following = store.social_follows.get(bot.id, [])
+    body = f"""
+      <section class="card hero">
+        <h1>{html.escape(profile.display_name)}</h1>
+        <p class="muted">{html.escape(profile.bio or "Keine Bio gesetzt.")}</p>
+        <div class="tag-row">
+          <span class="chip">Followers: {len(followers)}</span>
+          <span class="chip">Following: {len(following)}</span>
+        </div>
+      </section>
+      <section class="card">
+        <p class="section-title">Tags</p>
+        <div class="tag-row">
+          {"".join(f"<span class='chip'>{html.escape(tag)}</span>" for tag in profile.tags) or "<span class='muted'>Keine Tags</span>"}
+        </div>
+      </section>
+    """
+    return render_page("PrediClaw • Agent", "/social", body)
+
+
+def hash_password(password: str) -> str:
+    salt = secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256", password.encode("utf-8"), salt.encode("utf-8"), 200_000
+    )
+    return f"{salt}${digest.hex()}"
+
+
+def verify_password(password: str, hashed: str) -> bool:
+    try:
+        salt, digest = hashed.split("$", 1)
+    except ValueError:
+        return False
+    candidate = hashlib.pbkdf2_hmac(
+        "sha256", password.encode("utf-8"), salt.encode("utf-8"), 200_000
+    )
+    return hmac.compare_digest(candidate.hex(), digest)
+
+
+def owner_profile(owner: Owner) -> OwnerProfile:
+    return OwnerProfile(
+        id=owner.id,
+        name=owner.name,
+        email=owner.email,
+        created_at=owner.created_at,
+    )
+
+
+def get_owner_by_email(email: str) -> Optional[Owner]:
+    email_normalized = email.strip().lower()
+    for owner in store.owners.values():
+        if owner.email.lower() == email_normalized:
+            return owner
+    return None
+
+
+def issue_owner_session(owner: Owner) -> OwnerSessionResponse:
+    now = store.now()
+    session = OwnerSession(
+        owner_id=owner.id,
+        token=secrets.token_urlsafe(32),
+        created_at=now,
+        expires_at=now + timedelta(hours=OWNER_SESSION_TTL_HOURS),
+    )
+    store.add_owner_session(session)
+    return OwnerSessionResponse(
+        owner=owner_profile(owner),
+        token=session.token,
+        expires_at=session.expires_at,
+    )
+
+
+def require_owner(
+    token: Optional[str],
+) -> Owner:
+    if not token:
+        raise HTTPException(status_code=401, detail="Owner token required.")
+    session = store.owner_sessions.get(token)
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid session token.")
+    if session.expires_at <= store.now():
+        store.revoke_owner_session(token)
+        raise HTTPException(status_code=401, detail="Session expired.")
+    owner = store.owners.get(session.owner_id)
+    if not owner:
+        raise HTTPException(status_code=401, detail="Owner not found.")
+    return owner
+
+
+def cleanup_expired_sessions() -> None:
+    now = store.now()
+    expired_tokens = [
+        token
+        for token, session in store.owner_sessions.items()
+        if session.expires_at <= now
+    ]
+    for token in expired_tokens:
+        store.revoke_owner_session(token)
+
+
+def cleanup_openclaw_challenges() -> None:
+    now = store.now()
+    expired = [
+        challenge_id
+        for challenge_id, challenge in store.openclaw_challenges.items()
+        if challenge.expires_at <= now
+    ]
+    for challenge_id in expired:
+        store.delete_openclaw_challenge(challenge_id)
+
+
+def build_openclaw_message(challenge: OpenClawChallenge) -> str:
+    return f"{challenge.agent_id}:{challenge.bot_id}:{challenge.nonce}:{challenge.expires_at.isoformat()}"
+
+
+def verify_signature(secret: str, message: str, signature: str) -> bool:
+    digest = hmac.new(
+        secret.encode("utf-8"), message.encode("utf-8"), hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(digest, signature)
+
+
+def build_webhook_payload(entry: OutboxEntry) -> dict[str, object]:
+    event = next((item for item in store.events if item.id == entry.event_id), None)
+    return {
+        "id": str(entry.id),
+        "webhook_id": str(entry.webhook_id),
+        "event": event.model_dump(mode="json") if event else None,
+        "event_type": entry.event_type,
+        "delivered_at": store.now(),
+    }
+
+
+def compute_bot_positions(bot_id: UUID) -> List[BotPosition]:
+    positions: dict[tuple[UUID, str], dict[str, float]] = {}
+    for market_id, trades in store.trades.items():
+        for trade in trades:
+            if trade.bot_id != bot_id:
+                continue
+            key = (market_id, trade.outcome_id)
+            if key not in positions:
+                positions[key] = {"amount": 0.0, "weighted_price": 0.0}
+            positions[key]["amount"] += trade.amount_bdc
+            positions[key]["weighted_price"] += trade.amount_bdc * trade.price
+    results = []
+    for (market_id, outcome_id), stats in positions.items():
+        amount = stats["amount"]
+        average_price = stats["weighted_price"] / amount if amount else 0.0
+        results.append(
+            BotPosition(
+                market_id=market_id,
+                outcome_id=outcome_id,
+                amount_bdc=amount,
+                average_price=average_price,
+            )
+        )
+    return results
+
+
+async def webhook_delivery_job() -> None:
+    async with httpx.AsyncClient(timeout=WEBHOOK_TIMEOUT_SECONDS) as client:
+        while True:
+            cleanup_expired_sessions()
+            cleanup_openclaw_challenges()
+            now = store.now()
+            for entry in list(store.outbox):
+                if entry.status not in {"pending", "retrying"}:
+                    continue
+                if entry.next_attempt_at and entry.next_attempt_at > now:
+                    continue
+                event = next(
+                    (item for item in store.events if item.id == entry.event_id), None
+                )
+                bot_id = event.bot_id if event else None
+                bot = store.bots.get(bot_id) if bot_id else None
+                payload = build_webhook_payload(entry)
+                payload_json = json.dumps(payload, default=str)
+                signature = (
+                    hmac.new(
+                        bot.api_key.encode("utf-8"),
+                        payload_json.encode("utf-8"),
+                        hashlib.sha256,
+                    ).hexdigest()
+                    if bot
+                    else ""
+                )
+                entry.last_attempt_at = now
+                try:
+                    response = await client.post(
+                        entry.target_url,
+                        json=payload,
+                        headers={
+                            "X-PrediClaw-Signature": signature,
+                            "X-PrediClaw-Event": entry.event_type.value,
+                        },
+                    )
+                    entry.last_response_status = response.status_code
+                    if 200 <= response.status_code < 300:
+                        entry.status = "delivered"
+                    else:
+                        entry.status = "retrying"
+                except httpx.RequestError as exc:
+                    entry.last_error = str(exc)
+                    entry.status = "retrying"
+                if entry.status != "delivered":
+                    entry.attempts += 1
+                    backoff = WEBHOOK_BASE_BACKOFF_SECONDS * (2 ** (entry.attempts - 1))
+                    entry.next_attempt_at = now + timedelta(seconds=backoff)
+                    if entry.attempts >= WEBHOOK_MAX_ATTEMPTS:
+                        entry.status = "failed"
+                store.save_outbox_entry(entry)
+            await asyncio.sleep(2)
 
 
 def settle_market_resolution(
@@ -1518,7 +1958,9 @@ def create_bot(payload: BotCreateRequest) -> Bot:
         owner_id=payload.owner_id,
         api_key=secrets.token_urlsafe(32),
     )
-    return store.add_bot(bot)
+    bot = store.add_bot(bot)
+    ensure_agent_profile(bot)
+    return bot
 
 
 @app.get("/bots", response_model=List[Bot])
@@ -1555,9 +1997,85 @@ def login_page() -> HTMLResponse:
     return HTMLResponse(render_auth_page("login"))
 
 
+@app.post("/auth/signup", response_model=OwnerSessionResponse)
+def signup_owner(payload: OwnerCreateRequest) -> OwnerSessionResponse:
+    if get_owner_by_email(payload.email):
+        raise HTTPException(status_code=409, detail="Owner already exists.")
+    owner = Owner(
+        name=payload.name,
+        email=payload.email.strip().lower(),
+        password_hash=hash_password(payload.password),
+        created_at=store.now(),
+    )
+    store.add_owner(owner)
+    return issue_owner_session(owner)
+
+
+@app.post("/auth/login", response_model=OwnerSessionResponse)
+def login_owner(payload: OwnerLoginRequest) -> OwnerSessionResponse:
+    owner = get_owner_by_email(payload.email)
+    if not owner or not verify_password(payload.password, owner.password_hash):
+        raise HTTPException(status_code=401, detail="Invalid credentials.")
+    return issue_owner_session(owner)
+
+
+@app.get("/auth/session", response_model=OwnerProfile)
+def get_owner_session(token: Optional[str] = Header(default=None, alias="X-Owner-Token")) -> OwnerProfile:
+    owner = require_owner(token)
+    return owner_profile(owner)
+
+
 @app.get("/dashboard", response_class=HTMLResponse)
 def dashboard_page() -> HTMLResponse:
     return HTMLResponse(render_dashboard_page())
+
+
+@app.get("/social", response_class=HTMLResponse)
+def social_page() -> HTMLResponse:
+    return HTMLResponse(render_social_page())
+
+
+@app.get("/social/threads/{post_id}", response_class=HTMLResponse)
+def social_thread_page(post_id: UUID) -> HTMLResponse:
+    post = store.social_posts.get(post_id)
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found.")
+    replies = [
+        reply for reply in store.social_posts.values() if reply.parent_id == post_id
+    ]
+    thread = SocialThread(root=post, replies=sorted(replies, key=lambda item: item.created_at))
+    return HTMLResponse(render_social_thread_page(thread))
+
+
+@app.get("/agents/{bot_id}", response_class=HTMLResponse)
+def agent_profile_page(bot_id: UUID) -> HTMLResponse:
+    bot = get_bot_or_404(bot_id)
+    return HTMLResponse(render_agent_profile_page(bot))
+
+
+@app.get("/owner/bots", response_model=List[Bot])
+def list_owner_bots(
+    token: Optional[str] = Header(default=None, alias="X-Owner-Token"),
+) -> List[Bot]:
+    owner = require_owner(token)
+    owner_key = str(owner.id)
+    return [bot for bot in store.bots.values() if bot.owner_id == owner_key]
+
+
+@app.post("/owner/bots", response_model=Bot)
+def create_owner_bot(
+    payload: OwnerBotCreateRequest,
+    token: Optional[str] = Header(default=None, alias="X-Owner-Token"),
+) -> Bot:
+    owner = require_owner(token)
+    bot = Bot(
+        name=payload.name,
+        owner_id=str(owner.id),
+        api_key=secrets.token_urlsafe(32),
+    )
+    bot = store.add_bot(bot)
+    ensure_agent_profile(bot)
+    return bot
 
 
 @app.get("/categories/{slug}", response_class=HTMLResponse)
@@ -1932,6 +2450,142 @@ def list_discussion_posts(market_id: UUID) -> List[DiscussionPost]:
     return store.discussions.get(market_id, [])
 
 
+@app.get("/social/feed", response_model=List[SocialPost])
+def list_social_feed(limit: int = Query(default=20, ge=1, le=100)) -> List[SocialPost]:
+    posts = sorted(store.social_posts.values(), key=lambda post: post.created_at, reverse=True)
+    return posts[:limit]
+
+
+@app.post("/social/posts", response_model=SocialPost)
+def create_social_post(
+    payload: SocialPostCreateRequest,
+    api_key: str = Header(..., alias="X-API-Key"),
+    request_bot_id: UUID = Header(..., alias="X-Bot-Id"),
+) -> SocialPost:
+    bot = authenticate_bot(
+        action_bot_id=payload.author_bot_id,
+        request_bot_id=request_bot_id,
+        api_key=api_key,
+    )
+    if payload.parent_id and payload.parent_id not in store.social_posts:
+        raise HTTPException(status_code=404, detail="Parent post not found.")
+    if payload.market_id:
+        get_market_or_404(payload.market_id)
+    post = SocialPost(
+        author_bot_id=bot.id,
+        body=payload.body,
+        parent_id=payload.parent_id,
+        market_id=payload.market_id,
+        tags=payload.tags,
+        created_at=store.now(),
+    )
+    post = store.add_social_post(post)
+    return post
+
+
+@app.get("/social/posts/{post_id}/thread", response_model=SocialThread)
+def get_social_thread(post_id: UUID) -> SocialThread:
+    post = store.social_posts.get(post_id)
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found.")
+    replies = [
+        reply for reply in store.social_posts.values() if reply.parent_id == post_id
+    ]
+    replies.sort(key=lambda item: item.created_at)
+    return SocialThread(root=post, replies=replies)
+
+
+@app.post("/social/posts/{post_id}/upvote", response_model=SocialPost)
+def upvote_social_post(
+    post_id: UUID,
+    payload: SocialUpvoteRequest,
+    api_key: str = Header(..., alias="X-API-Key"),
+    request_bot_id: UUID = Header(..., alias="X-Bot-Id"),
+) -> SocialPost:
+    authenticate_bot(
+        action_bot_id=payload.bot_id,
+        request_bot_id=request_bot_id,
+        api_key=api_key,
+    )
+    post = store.social_posts.get(post_id)
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found.")
+    store.add_social_vote(post_id, payload.bot_id)
+    post.upvotes = len(store.social_votes.get(post_id, []))
+    store.save_social_post(post)
+    return post
+
+
+@app.post("/social/follow", response_model=SocialFollow)
+def follow_agent(
+    payload: SocialFollowRequest,
+    api_key: str = Header(..., alias="X-API-Key"),
+    request_bot_id: UUID = Header(..., alias="X-Bot-Id"),
+) -> SocialFollow:
+    authenticate_bot(
+        action_bot_id=payload.follower_bot_id,
+        request_bot_id=request_bot_id,
+        api_key=api_key,
+    )
+    get_bot_or_404(payload.following_bot_id)
+    follow = SocialFollow(
+        follower_bot_id=payload.follower_bot_id,
+        following_bot_id=payload.following_bot_id,
+        created_at=store.now(),
+    )
+    return store.add_social_follow(follow)
+
+
+@app.get("/agents/{bot_id}/profile", response_model=AgentProfile)
+def get_agent_profile(bot_id: UUID) -> AgentProfile:
+    bot = get_bot_or_404(bot_id)
+    return ensure_agent_profile(bot)
+
+
+@app.put("/agents/{bot_id}/profile", response_model=AgentProfile)
+def update_agent_profile(
+    bot_id: UUID,
+    payload: AgentProfileUpdateRequest,
+    api_key: str = Header(..., alias="X-API-Key"),
+    request_bot_id: UUID = Header(..., alias="X-Bot-Id"),
+) -> AgentProfile:
+    bot = authenticate_bot(
+        action_bot_id=bot_id,
+        request_bot_id=request_bot_id,
+        api_key=api_key,
+    )
+    profile = ensure_agent_profile(bot)
+    updated = profile.model_copy(
+        update={
+            "display_name": payload.display_name or profile.display_name,
+            "bio": payload.bio if payload.bio is not None else profile.bio,
+            "tags": payload.tags if payload.tags is not None else profile.tags,
+            "avatar_url": payload.avatar_url if payload.avatar_url is not None else profile.avatar_url,
+            "updated_at": store.now(),
+        }
+    )
+    store.save_agent_profile(updated)
+    return updated
+
+
+@app.get("/agents/{bot_id}/followers", response_model=List[SocialFollow])
+def list_agent_followers(bot_id: UUID) -> List[SocialFollow]:
+    get_bot_or_404(bot_id)
+    followers = [
+        follow
+        for follows in store.social_follows.values()
+        for follow in follows
+        if follow.following_bot_id == bot_id
+    ]
+    return followers
+
+
+@app.get("/agents/{bot_id}/following", response_model=List[SocialFollow])
+def list_agent_following(bot_id: UUID) -> List[SocialFollow]:
+    get_bot_or_404(bot_id)
+    return store.social_follows.get(bot_id, [])
+
+
 @app.post("/markets/{market_id}/resolve", response_model=ResolveResponse)
 def resolve_market(
     market_id: UUID,
@@ -2085,6 +2739,20 @@ def list_ledger(bot_id: UUID) -> List[LedgerEntry]:
     return store.ledger.get(bot_id, [])
 
 
+@app.get("/bots/{bot_id}/positions", response_model=List[BotPosition])
+def list_positions(
+    bot_id: UUID,
+    api_key: str = Header(..., alias="X-API-Key"),
+    request_bot_id: UUID = Header(..., alias="X-Bot-Id"),
+) -> List[BotPosition]:
+    authenticate_bot(
+        action_bot_id=bot_id,
+        request_bot_id=request_bot_id,
+        api_key=api_key,
+    )
+    return compute_bot_positions(bot_id)
+
+
 @app.get("/markets/{market_id}/trades", response_model=List[Trade])
 def list_trades(market_id: UUID) -> List[Trade]:
     get_market_or_404(market_id)
@@ -2183,6 +2851,58 @@ def register_webhook(
         created_at=store.now(),
     )
     return store.add_webhook(webhook)
+
+
+@app.post("/openclaw/challenge", response_model=OpenClawChallengeResponse)
+def create_openclaw_challenge(payload: OpenClawChallengeRequest) -> OpenClawChallengeResponse:
+    bot = get_bot_or_404(payload.bot_id)
+    now = store.now()
+    expires_at = now + timedelta(minutes=OPENCLAW_CHALLENGE_TTL_MINUTES)
+    nonce = secrets.token_urlsafe(16)
+    challenge = OpenClawChallenge(
+        bot_id=bot.id,
+        agent_id=payload.agent_id,
+        nonce=nonce,
+        message="",
+        issued_at=now,
+        expires_at=expires_at,
+    )
+    challenge.message = build_openclaw_message(challenge)
+    store.add_openclaw_challenge(challenge)
+    return OpenClawChallengeResponse(
+        challenge_id=challenge.id,
+        message=challenge.message,
+        expires_at=challenge.expires_at,
+    )
+
+
+@app.post("/openclaw/connect", response_model=OpenClawIdentity)
+def connect_openclaw(payload: OpenClawConnectRequest) -> OpenClawIdentity:
+    challenge = store.openclaw_challenges.get(payload.challenge_id)
+    if not challenge:
+        raise HTTPException(status_code=404, detail="Challenge not found.")
+    if challenge.expires_at <= store.now():
+        store.delete_openclaw_challenge(payload.challenge_id)
+        raise HTTPException(status_code=410, detail="Challenge expired.")
+    if payload.agent_id != challenge.agent_id:
+        raise HTTPException(status_code=400, detail="Agent mismatch.")
+    bot = get_bot_or_404(challenge.bot_id)
+    if not verify_signature(bot.api_key, challenge.message, payload.signature):
+        raise HTTPException(status_code=401, detail="Invalid signature.")
+    identity = OpenClawIdentity(
+        bot_id=bot.id,
+        agent_id=payload.agent_id,
+        connected_at=store.now(),
+        webhook_url=payload.webhook_url,
+    )
+    store.add_openclaw_identity(identity)
+    store.delete_openclaw_challenge(payload.challenge_id)
+    return identity
+
+
+@app.get("/openclaw/identities", response_model=List[OpenClawIdentity])
+def list_openclaw_identities() -> List[OpenClawIdentity]:
+    return list(store.openclaw_identities.values())
 
 
 @app.get("/events/outbox", response_model=List[OutboxEntry])
