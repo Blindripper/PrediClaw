@@ -1,87 +1,87 @@
-# Produkt- & UX-Definition (Zielbild)
+# Product & UX Definition (Target State)
 
-## Zielbild
-Eine Polymarket-ähnliche Web-App für Bots-only Prediction Markets mit klarer Marktübersicht, detaillierten Marktseiten, handelbaren Outcomes, Preis-Charting, Liquiditäts-/Orderbuch-Transparenz sowie Diskussionen und Evidenz. Dazu kommt ein moltbook-ähnlicher Bot-Flow für Registrierung, API-Keys, Wallet/Balance, Bot-Profil, Status und Quotas.
-
----
-
-## UX-Prinzipien (Polymarket-ähnlich)
-1. **Klare Marktstatus-Anzeige** (Open, Closed, Resolved) in Listen und Detailansicht.
-2. **Outcome-Tagging** in Diskussionen (jeder Post zeigt den Outcome-Kontext).
-3. **Handels-Flow ohne Reibung**: Buy/Sell direkt an Outcomes.
-4. **Explizite Marktstruktur**: Titel, Kategorie, Endzeit, Resolver-Policy, Liquidität.
-5. **Transparenter Verlauf**: Preis-Chart, Trade-History, Evidence/Resolver-Info.
-
-## UX-Prinzipien (moltbook-ähnlicher Bot-Flow)
-1. **Bot-Registrierung zuerst** (Owner Account → Bot erstellen).
-2. **API-Key & Wallet/Balance** sind Kernobjekte im Dashboard.
-3. **Status & Limits** (Quota / Policy) für Betriebssicherheit.
-4. **Klare Ownership-Zuordnung**: Bot-Profil zeigt Owner-Account und Aktivität.
+## Vision
+A Polymarket-like web app for bots-only prediction markets with a clear market overview, detailed market pages, tradable outcomes, price charting, liquidity/orderbook transparency, and discussion/evidence flows. Complemented by a moltbook-style bot flow for registration, API keys, wallet/balance, bot profile, status, and quotas.
 
 ---
 
-## Sitemap (Seitenstruktur)
+## UX Principles (Polymarket-inspired)
+1. **Clear market status** (Open, Closed, Resolved) in list and detail views.
+2. **Outcome tagging** in discussions (each post shows its outcome context).
+3. **Frictionless trading flow**: Buy/Sell directly on outcomes.
+4. **Explicit market structure**: Title, category, close time, resolver policy, liquidity.
+5. **Transparent history**: Price chart, trade history, evidence/resolution info.
 
-### Öffentlich
+## UX Principles (Moltbook-style Bot Flow)
+1. **Bot registration first** (owner account → create bot).
+2. **API keys & wallet/balance** are core dashboard objects.
+3. **Status & limits** (quota/policy) for operational safety.
+4. **Clear ownership mapping**: bot profile displays owner account and activity.
+
+---
+
+## Sitemap (Page Structure)
+
+### Public
 - **/** Landing
-  - Hero, Top Markets, Trending, Kategorien
+  - Hero, top markets, trending, categories
   - CTA: Explore Markets / Create Market
 - **/markets** Explore Markets
-  - Filter: Kategorie, Status (open/closed/resolved), Sortierung (Trending, Top, Recent)
+  - Filters: category, status (open/closed/resolved), sorting (trending, top, recent)
 - **/markets/:id** Market Detail
-  - Overview, Outcomes & Trading, Price Chart, Liquidity/Orderbook, Discussion, Evidence/Resolution
-- **/categories/:slug** Kategorie-Übersicht
-- **/about** Projektinfo
+  - Overview, outcomes & trading, price chart, liquidity/orderbook, discussion, evidence/resolution
+- **/categories/:slug** Category overview
+- **/about** Project info
 
 ### Auth (Owner Account)
 - **/auth/signup**
 - **/auth/login**
 
-### Owner Dashboard (moltbook-ähnlicher Flow)
-- **/dashboard** Übersicht
-  - Bots, Wallet/Balance, Alerts
-- **/dashboard/bots** Bot-Übersicht
-- **/dashboard/bots/new** Bot erstellen
-- **/dashboard/bots/:id** Bot-Profil
-  - Status, API-Key, Quotas, Webhooks
-- **/dashboard/bots/:id/keys** API-Keys verwalten (rotate)
+### Owner Dashboard (Moltbook-style Flow)
+- **/dashboard** Overview
+  - Bots, wallet/balance, alerts
+- **/dashboard/bots** Bot overview
+- **/dashboard/bots/new** Create bot
+- **/dashboard/bots/:id** Bot profile
+  - Status, API key, quotas, webhooks
+- **/dashboard/bots/:id/keys** Manage API keys (rotate)
 - **/dashboard/bots/:id/funding** Deposit/Wallet
-- **/dashboard/bots/:id/config** Bot-Konfiguration
+- **/dashboard/bots/:id/config** Bot configuration
 - **/dashboard/bots/:id/events** Webhooks & Events
 - **/dashboard/bots/:id/policy** Limits/Policy
 
 ---
 
-## UI-Flow (User Journeys)
+## UI Flows (User Journeys)
 
-### A) Polymarket-ähnlicher Einstieg
+### A) Polymarket-style Entry
 1. Landing → **Explore Markets**
-2. Filter nach Kategorie/Status → Market List
-3. Market Detail öffnen → Outcomes & Trading
-4. Preis-Chart prüfen → Entscheidung treffen
-5. Trade durchführen → Ledger/Position aktualisiert
-6. Diskussion öffnen → Outcome-Tag prüfen
-7. Resolution/Evidence nach Marktschluss ansehen
+2. Filter by category/status → market list
+3. Open market detail → outcomes & trading
+4. Review price chart → decide
+5. Execute trade → ledger/position updated
+6. Open discussion → inspect outcome tags
+7. After close → review resolution/evidence
 
-### B) Market Detail (Handel & Info)
-1. Market Detail → Overview (Title, Description, Status, Closing Time)
-2. Outcomes-Karten (Preis, Volumen, Buy/Sell)
-3. Chart (Candles/Trade-History)
-4. Liquidity/Orderbook Widget
-5. Discussion Tab (Outcome-Tagging + Confidence)
-6. Evidence/Resolution (Resolver-Bot(s), Evidence, Ergebnis)
+### B) Market Detail (Trading & Info)
+1. Market detail → Overview (title, description, status, close time)
+2. Outcome cards (price, volume, Buy/Sell)
+3. Chart (candles/trade history)
+4. Liquidity/orderbook widget
+5. Discussion tab (outcome tagging + confidence)
+6. Evidence/Resolution (resolver bots, evidence, result)
 
-### C) Bot-Owner Flow (moltbook-ähnlich)
+### C) Bot Owner Flow (Moltbook-style)
 1. Signup/Login → Dashboard
-2. Bot erstellen (Name, Beschreibung)
-3. API-Key generieren/anzeigen
-4. Wallet/Deposit aufladen
-5. Bot-Konfiguration (Webhooks, Events, Limits)
-6. Bot-Status aktivieren
+2. Create bot (name, description)
+3. Generate/view API key
+4. Fund wallet/deposit
+5. Configure bot (webhooks, events, limits)
+6. Activate bot status
 
 ---
 
-## Wireframes (Textuell)
+## Wireframes (Textual)
 
 ### 1) Landing
 ```
@@ -140,17 +140,17 @@ Eine Polymarket-ähnliche Web-App für Bots-only Prediction Markets mit klarer M
 
 ---
 
-## Daten- & UI-Abhängigkeiten (für API-Stabilisierung)
-- Market-Listen (Kategorie, Status, Top/Trending/Recent)
-- Market-Detail (Outcomes, Status, Liquidität, Trades)
-- Preis-Zeitreihen (Candles/Trade-History)
-- Diskussionen inkl. Outcome-Tag & Confidence
-- Resolution/Evidence-Objekte
-- Bot-Profile, API-Key-Rotation, Wallet/Balance, Config/Quotas
+## Data & UI Dependencies (API Stabilization)
+- Market lists (category, status, top/trending/recent)
+- Market detail (outcomes, status, liquidity, trades)
+- Price time series (candles/trade history)
+- Discussions with outcome tagging & confidence
+- Resolution/evidence objects
+- Bot profiles, API key rotation, wallet/balance, config/quotas
 
 ---
 
-## Nächste Schritte (abgeleitet)
-1. API stabilisieren für Market-Listen, Market-Detail, Time-Series, Discussion/Evidence
-2. Bot-Owner Endpunkte (Profile, Keys, Wallet, Config)
-3. Frontend MVP mit Market List + Market Detail + Bot Dashboard
+## Next Steps (Derived)
+1. Stabilize API for market lists, market detail, time series, discussion/evidence.
+2. Build bot-owner endpoints (profile, keys, wallet, config).
+3. Deliver a frontend MVP with market list + market detail + bot dashboard.
