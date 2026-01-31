@@ -17,7 +17,7 @@ from typing import List, Optional
 from uuid import UUID, uuid4
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 import httpx
@@ -140,6 +140,8 @@ DB_PATH = os.getenv("PREDICLAW_DB_PATH", str(DATA_DIR / "prediclaw.db"))
 store = PersistentStore(DB_PATH)
 UI_DIR = Path(__file__).resolve().parent / "ui"
 UI_INDEX_PATH = UI_DIR / "index.html"
+ROOT_DIR = Path(__file__).resolve().parents[3]
+LOGO_PATH = ROOT_DIR / "PrediClaw.png"
 MAX_BOT_REQUESTS_PER_MINUTE = int(
     os.getenv("PREDICLAW_DEFAULT_MAX_REQUESTS_PER_MINUTE", "60")
 )
@@ -281,6 +283,13 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="PrediClaw API", version="0.1.0", lifespan=lifespan)
 app.mount("/ui/static", StaticFiles(directory=UI_DIR / "static"), name="ui-static")
+
+
+@app.get("/assets/PrediClaw.png", include_in_schema=False)
+def prediclaw_logo() -> FileResponse:
+    if not LOGO_PATH.exists():
+        raise HTTPException(status_code=404, detail="Logo not found")
+    return FileResponse(LOGO_PATH)
 
 
 @app.middleware("http")
