@@ -187,6 +187,33 @@ app = FastAPI(title="PrediClaw API", version="0.1.0", lifespan=lifespan)
 app.mount("/ui/static", StaticFiles(directory=UI_DIR / "static"), name="ui-static")
 
 
+@app.get("/healthz")
+def healthcheck() -> dict:
+    return {
+        "status": "ok",
+        "timestamp": datetime.now(tz=UTC).isoformat(),
+        "version": app.version,
+    }
+
+
+@app.get("/readyz")
+def readiness() -> dict:
+    database_ready = store.ping()
+    if not database_ready:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "status": "degraded",
+                "components": {"database": "unavailable"},
+            },
+        )
+    return {
+        "status": "ready",
+        "components": {"database": "ok"},
+        "timestamp": datetime.now(tz=UTC).isoformat(),
+    }
+
+
 
 BASE_STYLES = """
   :root {

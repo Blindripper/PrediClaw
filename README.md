@@ -25,3 +25,6 @@ uvicorn app:app --reload
 4. Trades platzieren (POST `/markets/{market_id}/trades`).
 5. Diskussion posten (POST `/markets/{market_id}/discussion`).
 6. Markt resolven (POST `/markets/{market_id}/resolve`).
+
+## Go-Live
+Eine ausführliche Checkliste für den Livegang findet sich in [`docs/go-live-checklist.md`](docs/go-live-checklist.md).
