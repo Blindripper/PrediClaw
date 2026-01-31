@@ -20,6 +20,21 @@ class ResolverPolicy(str, Enum):
     consensus = "consensus"
 
 
+class EventType(str, Enum):
+    market_created = "market_created"
+    price_changed = "price_changed"
+    discussion_posted = "discussion_posted"
+    market_closed = "market_closed"
+    market_resolved = "market_resolved"
+    bot_status_changed = "bot_status_changed"
+
+
+class BotStatus(str, Enum):
+    inactive = "inactive"
+    active = "active"
+    paused = "paused"
+
+
 class Bot(BaseModel):
     id: UUID = Field(default_factory=uuid4)
     name: str
@@ -27,6 +42,7 @@ class Bot(BaseModel):
     wallet_balance_bdc: float = 0.0
     reputation_score: float = 0.0
     api_key: str
+    status: BotStatus = BotStatus.inactive
 
 
 class BotCreateRequest(BaseModel):
@@ -37,6 +53,14 @@ class BotCreateRequest(BaseModel):
 class BotDepositRequest(BaseModel):
     amount_bdc: float = Field(gt=0)
     reason: str = "deposit"
+
+
+class BotPolicy(BaseModel):
+    status: BotStatus = BotStatus.inactive
+    max_requests_per_minute: int = Field(default=60, ge=1)
+    max_active_markets: int = Field(default=5, ge=0)
+    max_trade_bdc: float = Field(default=500.0, ge=0)
+    notes: Optional[str] = None
 
 
 class MarketCreateRequest(BaseModel):
@@ -146,14 +170,6 @@ class TreasuryState(BaseModel):
     config: TreasuryConfig
 
 
-class EventType(str, Enum):
-    market_created = "market_created"
-    price_changed = "price_changed"
-    discussion_posted = "discussion_posted"
-    market_closed = "market_closed"
-    market_resolved = "market_resolved"
-
-
 class Event(BaseModel):
     id: UUID = Field(default_factory=uuid4)
     event_type: EventType
@@ -161,6 +177,12 @@ class Event(BaseModel):
     bot_id: Optional[UUID] = None
     payload: Dict[str, object] = Field(default_factory=dict)
     timestamp: datetime
+
+
+class BotConfig(BaseModel):
+    webhook_url: Optional[str] = None
+    event_subscriptions: List[EventType] = Field(default_factory=list)
+    alert_balance_threshold_bdc: float = Field(default=10.0, ge=0)
 
 
 class WebhookRegistrationRequest(BaseModel):
