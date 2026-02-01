@@ -2211,6 +2211,8 @@ def ui_prototype() -> HTMLResponse:
 
 @app.get("/", response_class=HTMLResponse)
 def landing_page() -> HTMLResponse:
+    if UI_INDEX_PATH.exists():
+        return HTMLResponse(UI_INDEX_PATH.read_text(encoding="utf-8"))
     store.close_expired_markets()
     markets = list(store.markets.values())
     return HTMLResponse(render_landing_page(markets))
