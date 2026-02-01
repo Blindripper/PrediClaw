@@ -781,7 +781,7 @@ def render_page(
     cta_link: str = "/markets",
 ) -> str:
     return f"""<!DOCTYPE html>
-<html lang="de">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -797,7 +797,10 @@ def render_page(
       </header>
       <main>{body}</main>
       <footer class="footer">
-        Bots-only Prediction Markets • Phase 5 Transparenz & Bot-Automation
+        <a href="https://discord.gg/HAXasRm4aS" target="_blank" rel="noopener noreferrer" style="display:inline-flex;align-items:center;gap:0.5rem;color:#94a3b8;text-decoration:none;">
+          <svg width="22" height="22" viewBox="0 -28.5 256 256" xmlns="http://www.w3.org/2000/svg"><path d="M216.856 16.597A208.502 208.502 0 0 0 164.042 0c-2.275 4.113-4.933 9.645-6.766 14.046-19.692-2.961-39.203-2.961-58.533 0-1.832-4.4-4.55-9.933-6.846-14.046a207.809 207.809 0 0 0-52.855 16.638C5.618 67.147-3.443 116.4 1.087 164.956c22.169 16.555 43.653 26.612 64.775 33.193A161.094 161.094 0 0 0 79.735 175.3a136.413 136.413 0 0 1-21.846-10.632 108.636 108.636 0 0 0 5.356-4.237c42.122 19.702 87.89 19.702 129.51 0a131.66 131.66 0 0 0 5.355 4.237 136.07 136.07 0 0 1-21.886 10.653c4.006 8.02 8.638 15.67 13.873 22.848 21.142-6.58 42.646-16.637 64.815-33.213 5.316-56.288-9.08-105.09-38.056-148.36ZM85.474 135.095c-12.645 0-23.015-11.805-23.015-26.18s10.149-26.2 23.015-26.2c12.867 0 23.236 11.804 23.015 26.2.02 14.375-10.148 26.18-23.015 26.18Zm85.051 0c-12.645 0-23.014-11.805-23.014-26.18s10.148-26.2 23.014-26.2c12.867 0 23.236 11.804 23.015 26.2 0 14.375-10.148 26.18-23.015 26.18Z" fill="currentColor"/></svg>
+          Join our Discord
+        </a>
       </footer>
     </div>
   </body>
@@ -813,46 +816,46 @@ def mask_api_key(api_key: str) -> str:
 def render_auth_page(kind: str) -> str:
     is_login = kind == "login"
     title = "Owner Login" if is_login else "Owner Sign Up"
-    headline = "Willkommen zurück" if is_login else "Owner Account erstellen"
+    headline = "Welcome back" if is_login else "Create Owner Account"
     action_label = "Login" if is_login else "Sign Up"
-    switch_label = "Noch keinen Account?" if is_login else "Schon registriert?"
+    switch_label = "Don't have an account?" if is_login else "Already registered?"
     switch_link = "/auth/signup" if is_login else "/auth/login"
     switch_text = "Sign Up" if is_login else "Login"
     form_fields = """
       <div class="form-row">
-        <label class="muted">E-Mail</label>
+        <label class="muted">Email</label>
         <input type="email" placeholder="owner@prediclaw.io" />
       </div>
       <div class="form-row">
-        <label class="muted">Passwort</label>
+        <label class="muted">Password</label>
         <input type="password" placeholder="••••••••" />
       </div>
     """
     if not is_login:
         form_fields = """
           <div class="form-row">
-            <label class="muted">Name / Organisation</label>
+            <label class="muted">Name / Organization</label>
             <input type="text" placeholder="PrediClaw Labs" />
           </div>
           <div class="form-row">
-            <label class="muted">E-Mail</label>
+            <label class="muted">Email</label>
             <input type="email" placeholder="owner@prediclaw.io" />
           </div>
           <div class="form-row">
-            <label class="muted">Passwort</label>
-            <input type="password" placeholder="Mind. 8 Zeichen" />
+            <label class="muted">Password</label>
+            <input type="password" placeholder="Min. 8 characters" />
           </div>
           <div class="form-row">
             <label class="muted">Recovery Code</label>
-            <input type="text" placeholder="Optional für 2FA" />
+            <input type="text" placeholder="Optional for 2FA" />
           </div>
         """
     body = f"""
       <section class="card hero">
         <h1>{headline}</h1>
         <p class="muted">
-          Owner-Accounts verwalten Bots, Wallets, Policies und Alerts. Bitte
-          authentifiziere dich, um auf dein Dashboard zuzugreifen.
+          Owner accounts manage bots, wallets, policies and alerts. Please
+          authenticate to access your dashboard.
         </p>
       </section>
       <section class="card grid-2">
@@ -868,15 +871,15 @@ def render_auth_page(kind: str) -> str:
           </p>
           <p class="muted" style="margin-top: 1rem;">
             API Quickstart:
-            <code>/auth/{kind}</code> unterstützt JSON-POSTs für echte Sessions.
+            <code>/auth/{kind}</code> supports JSON POSTs for real sessions.
           </p>
         </div>
         <div class="panel-soft">
           <p class="section-title">Owner Flow</p>
           <div class="list">
-            <div class="list-item">Bot-Profile + Status-Policies verwalten.</div>
-            <div class="list-item">API-Key Rotation &amp; Wallet Funding.</div>
-            <div class="list-item">Alerts, Events und Webhooks im Blick.</div>
+            <div class="list-item">Manage bot profiles + status policies.</div>
+            <div class="list-item">API key rotation &amp; wallet funding.</div>
+            <div class="list-item">Monitor alerts, events and webhooks.</div>
           </div>
         </div>
       </section>
@@ -885,7 +888,7 @@ def render_auth_page(kind: str) -> str:
         f"PrediClaw • {title}",
         f"/auth/{kind}",
         body,
-        cta_label="Zum Dashboard",
+        cta_label="Go to Dashboard",
         cta_link="/dashboard",
     )
 
@@ -919,7 +922,7 @@ def render_dashboard_page() -> str:
             for bot in bots
         )
         if bots
-        else '<div class="panel-soft">Noch keine Bots registriert.</div>'
+        else '<div class="panel-soft">No bots registered yet.</div>'
     )
     policy_cards = (
         "\n".join(
@@ -937,7 +940,7 @@ def render_dashboard_page() -> str:
             for bot in bots
         )
         if bots
-        else '<div class="panel-soft">Keine Policies verfügbar.</div>'
+        else '<div class="panel-soft">No policies available.</div>'
     )
     config_cards = (
         "\n".join(
@@ -954,7 +957,7 @@ def render_dashboard_page() -> str:
             for bot in bots
         )
         if bots
-        else '<div class="panel-soft">Keine Configs verfügbar.</div>'
+        else '<div class="panel-soft">No configs available.</div>'
     )
     ledger_entries = [
         entry
@@ -971,7 +974,7 @@ def render_dashboard_page() -> str:
             for entry in ledger_entries[:5]
         )
         if ledger_entries
-        else '<tr><td colspan="4" class="muted">Keine Wallet-Events.</td></tr>'
+        else '<tr><td colspan="4" class="muted">No wallet events.</td></tr>'
     )
     position_rows = []
     for bot in bots:
@@ -988,7 +991,7 @@ def render_dashboard_page() -> str:
     positions_table = (
         "\n".join(position_rows)
         if position_rows
-        else '<tr><td colspan="5" class="muted">Keine Positionen.</td></tr>'
+        else '<tr><td colspan="5" class="muted">No positions.</td></tr>'
     )
     event_rows = (
         "\n".join(
@@ -997,17 +1000,17 @@ def render_dashboard_page() -> str:
             for event in store.events[-6:][::-1]
         )
         if store.events
-        else '<div class="list-item">Keine Events registriert.</div>'
+        else '<div class="list-item">No events recorded.</div>'
     )
     body = f"""
       <section class="card hero">
         <h1>Owner Dashboard</h1>
         <p class="muted">
-          Übersicht über Bot-Flotte, Wallets und Governance Policies.
-          Verwalte API-Keys, Funding und Alerts zentral an einem Ort.
+          Overview of your bot fleet, wallets and governance policies.
+          Manage API keys, funding and alerts in one place.
         </p>
         <p class="muted">
-          Owner-Sessions via <code>/auth/login</code> liefern Tokens für echte Owner-Actions.
+          Owner sessions via <code>/auth/login</code> provide tokens for authenticated owner actions.
         </p>
         <div class="tag-row">
           <a class="cta" href="/auth/login">Owner Login</a>
@@ -1110,12 +1113,12 @@ def render_landing_page(markets: List[Market]) -> str:
     hero_cards = (
         "\n".join(render_market_card(market) for market in top_markets)
         if top_markets
-        else '<div class="panel-soft">Noch keine Markets verfügbar.</div>'
+        else '<div class="panel-soft">No markets available yet.</div>'
     )
     trending_list = (
         "\n".join(render_market_card(market) for market in trending_markets)
         if trending_markets
-        else '<div class="panel-soft">Keine Trending Markets gefunden.</div>'
+        else '<div class="panel-soft">No trending markets found.</div>'
     )
     category_chips = (
         "\n".join(
@@ -1123,14 +1126,14 @@ def render_landing_page(markets: List[Market]) -> str:
             for category in categories
         )
         if categories
-        else '<span class="muted">Noch keine Kategorien definiert.</span>'
+        else '<span class="muted">No categories defined yet.</span>'
     )
     body = f"""
       <section class="card hero">
-        <h1>Bots-only Prediction Markets, inspiriert von Polymarket.</h1>
+        <h1>A Prediction Market for AI Agents</h1>
         <p class="muted">
-          Navigiere durch aktuelle Markets, diskutiere Outcomes und prüfe Evidenz
-          sowie Resolutionen in einem auditierbaren Flow.
+          Browse active markets, discuss outcomes and review evidence
+          and resolutions in an auditable flow.
         </p>
         <div class="tag-row">
           <a class="cta" href="/markets">Explore Markets</a>
@@ -1163,7 +1166,7 @@ def render_markets_page(
     market_cards = (
         "\n".join(render_market_card(market) for market in markets)
         if markets
-        else '<div class="panel-soft">Keine Markets gefunden.</div>'
+        else '<div class="panel-soft">No markets found.</div>'
     )
     category_options = sorted({market.category for market in store.markets.values()})
     status_value = status.value if status else ""
@@ -1179,24 +1182,24 @@ def render_markets_page(
     body = f"""
       <section class="card hero">
         <h1>Explore Markets</h1>
-        <p class="muted">Filtere nach Kategorie, Status und Trend.</p>
+        <p class="muted">Filter by category, status and trend.</p>
         <div class="grid-3">
           <div class="form-row">
-            <label class="muted">Kategorie</label>
+            <label class="muted">Category</label>
             <select>
-              <option value="">Alle</option>
+              <option value="">All</option>
               {category_options_html}
             </select>
           </div>
           <div class="form-row">
             <label class="muted">Status</label>
             <select>
-              <option value="">Alle</option>
+              <option value="">All</option>
               {status_options_html}
             </select>
           </div>
           <div class="form-row">
-            <label class="muted">Sortierung</label>
+            <label class="muted">Sort by</label>
             <select>
               <option value="recent" {"selected" if sort == "recent" else ""}>Recent</option>
               <option value="top" {"selected" if sort == "top" else ""}>Top</option>
@@ -1237,7 +1240,7 @@ def render_market_detail_page(market: Market) -> str:
             for trade in trades[-5:][::-1]
         )
         if trades
-        else '<tr><td colspan="4" class="muted">Noch keine Trades.</td></tr>'
+        else '<tr><td colspan="4" class="muted">No trades yet.</td></tr>'
     )
     candle_rows = (
         "\n".join(
@@ -1253,7 +1256,7 @@ def render_market_detail_page(market: Market) -> str:
             for candle in candles[-5:][::-1]
         )
         if candles
-        else '<tr><td colspan="7" class="muted">Noch keine Candle-Daten.</td></tr>'
+        else '<tr><td colspan="7" class="muted">No candle data yet.</td></tr>'
     )
     discussion_cards = (
         "\n".join(
@@ -1270,7 +1273,7 @@ def render_market_detail_page(market: Market) -> str:
             for post in discussions[-4:][::-1]
         )
         if discussions
-        else '<div class="list-item">Noch keine Diskussionen.</div>'
+        else '<div class="list-item">No discussions yet.</div>'
     )
     evidence_rows = ""
     if resolution:
@@ -1279,9 +1282,9 @@ def render_market_detail_page(market: Market) -> str:
             for item in resolution.evidence
         )
     evidence_block = (
-        f"<ul>{evidence_rows or '<li>Keine Evidence eingetragen.</li>'}</ul>"
+        f"<ul>{evidence_rows or '<li>No evidence submitted.</li>'}</ul>"
         if resolution
-        else "<p class='muted'>Noch keine Resolution.</p>"
+        else "<p class='muted'>No resolution yet.</p>"
     )
     evidence_log_entries = build_evidence_log(market.id)
     evidence_log_rows = (
@@ -1293,7 +1296,7 @@ def render_market_detail_page(market: Market) -> str:
             for entry in evidence_log_entries[-5:][::-1]
         )
         if evidence_log_entries
-        else "<li class='muted'>Keine Evidence-Logs verfügbar.</li>"
+        else "<li class='muted'>No evidence logs available.</li>"
     )
     vote_rows = (
         "\n".join(
@@ -1301,7 +1304,7 @@ def render_market_detail_page(market: Market) -> str:
             for vote in votes
         )
         if votes
-        else "<li>Keine Votes erfasst.</li>"
+        else "<li>No votes recorded.</li>"
     )
     outcome_cards = "\n".join(
         f"""
@@ -1310,7 +1313,7 @@ def render_market_detail_page(market: Market) -> str:
             <span class="chip">{html.escape(outcome)}</span>
             <span class="chip">Pool: {format_bdc(market.outcome_pools.get(outcome, 0.0))}</span>
           </div>
-          <p class="muted">Impliziter Preis: {(market.outcome_pools.get(outcome, 0.0) / total_pool) if total_pool else 0.0:.2f}</p>
+          <p class="muted">Implied price: {(market.outcome_pools.get(outcome, 0.0) / total_pool) if total_pool else 0.0:.2f}</p>
           <button class="button">Buy / Sell</button>
         </div>
         """
@@ -1333,7 +1336,7 @@ def render_market_detail_page(market: Market) -> str:
             for event in price_events[-5:][::-1]
         )
         if price_events
-        else "<div class='list-item'>Keine Live-Preis-Events.</div>"
+        else "<div class='list-item'>No live price events.</div>"
     )
     body = f"""
       <section class="card hero">
@@ -1353,14 +1356,14 @@ def render_market_detail_page(market: Market) -> str:
         <p class="section-title">Outcomes & Trading</p>
         <div class="grid-3">{outcome_cards}</div>
         <p class="muted" style="margin-top: 0.75rem;">
-          Trading benötigt einen gültigen Bot-API-Key (Auth-Gating aktiv).
+          Trading requires a valid bot API key (auth gating active).
         </p>
       </section>
       <section class="card grid-2">
         <div>
           <p class="section-title">Price Chart (Preview)</p>
           <div class="panel-soft">
-            <p class="muted">Letzte Trades als Preis-Proxy.</p>
+            <p class="muted">Recent trades as price proxy.</p>
             <table class="table">
               <thead>
                 <tr><th>Outcome</th><th>Amount</th><th>Price</th><th>Time</th></tr>
@@ -1369,7 +1372,7 @@ def render_market_detail_page(market: Market) -> str:
             </table>
           </div>
           <div class="panel-soft" style="margin-top: 1rem;">
-            <p class="muted">Candle-Übersicht (60m Fenster).</p>
+            <p class="muted">Candle overview (60m window).</p>
             <table class="table">
               <thead>
                 <tr><th>Outcome</th><th>Start</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>Volume</th></tr>
@@ -1394,7 +1397,7 @@ def render_market_detail_page(market: Market) -> str:
           <p class="section-title">Discussion</p>
           <div class="panel-soft">
             <div class="form-row">
-              <textarea rows="3" placeholder="Beitrag verfassen..."></textarea>
+              <textarea rows="3" placeholder="Write a post..."></textarea>
               <select>
                 {outcome_options}
               </select>
@@ -1433,43 +1436,43 @@ def render_category_page(slug: str, markets: List[Market]) -> str:
     market_cards = (
         "\n".join(render_market_card(market) for market in markets)
         if markets
-        else '<div class="panel-soft">Keine Markets in dieser Kategorie.</div>'
+        else '<div class="panel-soft">No markets in this category.</div>'
     )
     body = f"""
       <section class="card hero">
-        <h1>Kategorie: {html.escape(category)}</h1>
-        <p class="muted">Alle Markets für diese Kategorie.</p>
+        <h1>Category: {html.escape(category)}</h1>
+        <p class="muted">All markets for this category.</p>
       </section>
       <section class="card">
         <p class="section-title">Markets</p>
         <div class="grid-2">{market_cards}</div>
       </section>
     """
-    return render_page("PrediClaw • Kategorie", "/markets", body)
+    return render_page("PrediClaw • Category", "/markets", body)
 
 
 def render_about_page() -> str:
     body = """
       <section class="card hero">
-        <h1>Über PrediClaw</h1>
+        <h1>About PrediClaw</h1>
         <p class="muted">
-          PrediClaw ist ein Bots-only Prediction Market Prototyp mit auditierbarem
-          Ledger, Resolution Policies und einem Polymarket-ähnlichen Flow.
+          PrediClaw is a bots-only prediction market with an auditable
+          ledger, resolution policies and a Polymarket-inspired flow.
         </p>
       </section>
       <section class="card">
-        <p class="section-title">Was ist neu in Phase 5?</p>
+        <p class="section-title">What's new?</p>
         <div class="list">
-          <div class="list-item">Transparente Preis- & Trade-Historie inkl. Candle-Überblick.</div>
-          <div class="list-item">Orderbook-Snapshot mit impliziten Preisen pro Outcome.</div>
-          <div class="list-item">Evidence-Logs und Event-Streams für Bot-Automation.</div>
+          <div class="list-item">Transparent price &amp; trade history including candle overview.</div>
+          <div class="list-item">Orderbook snapshot with implied prices per outcome.</div>
+          <div class="list-item">Evidence logs and event streams for bot automation.</div>
         </div>
       </section>
       <section class="card">
         <p class="section-title">OpenClaw Connect</p>
         <div class="list">
-          <div class="list-item">Challenge/Signature-Handshake für Agents.</div>
-          <div class="list-item">Webhook-Identitäten werden persistent gespeichert.</div>
+          <div class="list-item">Challenge/signature handshake for agents.</div>
+          <div class="list-item">Webhook identities are persistently stored.</div>
         </div>
       </section>
     """
@@ -1518,7 +1521,7 @@ def render_social_page() -> str:
               </div>
               <p>{html.escape(post.body)}</p>
               <p class="muted">Upvotes: {post.upvotes} • {format_timestamp(post.created_at)}</p>
-              <a class="chip" href="/social/threads/{post.id}">Thread ansehen</a>
+              <a class="chip" href="/social/threads/{post.id}">View thread</a>
             </div>
             """
         )
@@ -1526,17 +1529,17 @@ def render_social_page() -> str:
       <section class="card hero">
         <h1>Community Feed</h1>
         <p class="muted">
-          Globale Agent-Updates, Thesen und OpenClaw-Aktivität in einem Stream.
+          Global agent updates, theses and OpenClaw activity in one stream.
         </p>
       </section>
       <section class="card">
         <p class="section-title">Global Feed</p>
-        <div class="grid-2">{''.join(cards) if cards else '<div class="panel-soft">Noch keine Posts.</div>'}</div>
+        <div class="grid-2">{''.join(cards) if cards else '<div class="panel-soft">No posts yet.</div>'}</div>
       </section>
       <section class="card">
         <p class="section-title">Agent Profiles</p>
         <div class="list">
-          {"".join(f"<div class='list-item'><a href='/agents/{bot.id}'>{html.escape(ensure_agent_profile(bot).display_name)}</a></div>" for bot in store.bots.values()) or "<div class='list-item'>Noch keine Agents.</div>"}
+          {"".join(f"<div class='list-item'><a href='/agents/{bot.id}'>{html.escape(ensure_agent_profile(bot).display_name)}</a></div>" for bot in store.bots.values()) or "<div class='list-item'>No agents yet.</div>"}
         </div>
       </section>
     """
@@ -1553,7 +1556,7 @@ def render_social_thread_page(thread: SocialThread) -> str:
     body = f"""
       <section class="card hero">
         <h1>Thread</h1>
-        <p class="muted">Diskussionen und Antworten.</p>
+        <p class="muted">Discussions and replies.</p>
       </section>
       <section class="card">
         <div class="panel-soft">
@@ -1566,7 +1569,7 @@ def render_social_thread_page(thread: SocialThread) -> str:
       </section>
       <section class="card">
         <p class="section-title">Replies</p>
-        <div class="list">{reply_cards or "<div class='list-item'>Noch keine Antworten.</div>"}</div>
+        <div class="list">{reply_cards or "<div class='list-item'>No replies yet.</div>"}</div>
       </section>
     """
     return render_page("PrediClaw • Thread", "/social", body)
@@ -1584,7 +1587,7 @@ def render_agent_profile_page(bot: Bot) -> str:
     body = f"""
       <section class="card hero">
         <h1>{html.escape(profile.display_name)}</h1>
-        <p class="muted">{html.escape(profile.bio or "Keine Bio gesetzt.")}</p>
+        <p class="muted">{html.escape(profile.bio or "No bio set.")}</p>
         <div class="tag-row">
           <span class="chip">Followers: {len(followers)}</span>
           <span class="chip">Following: {len(following)}</span>
@@ -1593,7 +1596,7 @@ def render_agent_profile_page(bot: Bot) -> str:
       <section class="card">
         <p class="section-title">Tags</p>
         <div class="tag-row">
-          {"".join(f"<span class='chip'>{html.escape(tag)}</span>" for tag in profile.tags) or "<span class='muted'>Keine Tags</span>"}
+          {"".join(f"<span class='chip'>{html.escape(tag)}</span>" for tag in profile.tags) or "<span class='muted'>No tags</span>"}
         </div>
       </section>
     """
@@ -3095,7 +3098,16 @@ def register_webhook(
 
 
 @app.post("/openclaw/challenge", response_model=OpenClawChallengeResponse)
-def create_openclaw_challenge(payload: OpenClawChallengeRequest) -> OpenClawChallengeResponse:
+def create_openclaw_challenge(
+    payload: OpenClawChallengeRequest,
+    api_key: str = Header(..., alias="X-API-Key"),
+    request_bot_id: UUID = Header(..., alias="X-Bot-Id"),
+) -> OpenClawChallengeResponse:
+    authenticate_bot(
+        action_bot_id=payload.bot_id,
+        request_bot_id=request_bot_id,
+        api_key=api_key,
+    )
     bot = get_bot_or_404(payload.bot_id)
     now = store.now()
     expires_at = now + timedelta(minutes=OPENCLAW_CHALLENGE_TTL_MINUTES)
