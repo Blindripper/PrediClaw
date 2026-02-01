@@ -28,7 +28,8 @@ const fallbackBots = [
   { name: "Bot Theta", status: "inactive", reputation: 0.41 }
 ];
 
-const formatBdc = (amount) => `${amount.toLocaleString("en-US", { maximumFractionDigits: 1 })} BDC`;
+const formatBdc = (amount) =>
+  `${amount.toLocaleString("en-US", { maximumFractionDigits: 1 })} BDC`;
 
 const statusBadge = (status) => {
   if (status === "resolved") return "badge danger";
@@ -42,22 +43,80 @@ async function fetchJson(path) {
   return response.json();
 }
 
+/* --- Role selector (moltbook-style "I'm an Agent" / "I'm a Human") --- */
+function initRoleSelector() {
+  const roleTabs = document.querySelectorAll("[data-role]");
+  const roleContents = document.querySelectorAll("[data-role-content]");
+
+  roleTabs.forEach((tab) => {
+    tab.addEventListener("click", () => {
+      roleTabs.forEach((t) => t.classList.remove("active"));
+      tab.classList.add("active");
+      roleContents.forEach((c) => {
+        c.classList.toggle("hidden", c.dataset.roleContent !== tab.dataset.role);
+      });
+    });
+  });
+}
+
+/* --- Onboarding sub-tabs (API / Step-by-step) --- */
+function initOnboardingTabs() {
+  const tabs = document.querySelectorAll("[data-tab]");
+  const contents = document.querySelectorAll("[data-tab-content]");
+  tabs.forEach((tab) => {
+    tab.addEventListener("click", () => {
+      tabs.forEach((t) => t.classList.remove("active"));
+      tab.classList.add("active");
+      contents.forEach((c) => {
+        c.classList.toggle("hidden", c.dataset.tabContent !== tab.dataset.tab);
+      });
+    });
+  });
+}
+
+/* --- Live stats --- */
+async function loadStats(markets, bots) {
+  const openMarkets = markets.filter((m) => m.status === "open");
+  const totalLiquidity = markets.reduce((sum, m) => {
+    const pools = m.outcome_pools || {};
+    return sum + Object.values(pools).reduce((s, v) => s + v, 0);
+  }, 0);
+  const activeBots = bots.filter((b) => b.status === "active");
+
+  const elMarkets = document.querySelector("[data-stat-markets]");
+  const elLiquidity = document.querySelector("[data-stat-liquidity]");
+  const elBots = document.querySelector("[data-stat-bots]");
+
+  if (elMarkets) elMarkets.textContent = openMarkets.length;
+  if (elLiquidity) elLiquidity.textContent = formatBdc(totalLiquidity);
+  if (elBots) elBots.textContent = activeBots.length;
+}
+
+/* --- Market feed --- */
 async function loadMarkets() {
   const list = document.querySelector("[data-markets]");
   if (!list) return;
 
   let markets = fallbackMarkets;
+  let apiMarkets = [];
   try {
-    const apiMarkets = await fetchJson("/markets");
+    apiMarkets = await fetchJson("/markets");
     if (Array.isArray(apiMarkets) && apiMarkets.length) {
-      markets = apiMarkets.slice(0, 4).map((market) => {
-        const liquidity = Object.values(market.outcome_pools || {}).reduce((sum, value) => sum + value, 0);
+      markets = apiMarkets.slice(0, 6).map((market) => {
+        const liquidity = Object.values(market.outcome_pools || {}).reduce(
+          (sum, value) => sum + value,
+          0
+        );
         return {
           title: market.title,
           status: market.status,
           liquidity,
-          trades: (market.trade_count ?? 0),
-          favorite: `${market.outcomes?.[0] ?? "YES"} ${(liquidity ? Math.min(74, 45 + liquidity / 600) : 52).toFixed(0)}%`
+          trades: market.trade_count ?? 0,
+          favorite: `${market.outcomes?.[0] ?? "YES"} ${(
+            liquidity
+              ? Math.min(74, 45 + liquidity / 600)
+              : 52
+          ).toFixed(0)}%`
         };
       });
     }
@@ -78,17 +137,67 @@ async function loadMarkets() {
     `
     )
     .join("");
+
+  return apiMarkets;
 }
 
-async function loadBots() {
-  const list = document.querySelector("[data-bots]");
+/* --- Recent trades --- */
+async function loadRecentTrades(markets) {
+  const list = document.querySelector("[data-recent-trades]");
   if (!list) return;
 
+  const trades = [];
+  for (const market of (markets || []).slice(0, 4)) {
+    try {
+      const data = await fetchJson(`/markets/${market.id}/price-series`);
+      if (Array.isArray(data)) {
+        data.slice(-2).forEach((point) => {
+          trades.push({
+            market: market.title,
+            outcome: point.outcome_id,
+            amount: point.amount_bdc,
+            time: point.timestamp
+          });
+        });
+      }
+    } catch (_) {
+      /* skip */
+    }
+  }
+
+  if (!trades.length) {
+    list.innerHTML = '<div class="list-item muted">No recent trades</div>';
+    return;
+  }
+
+  trades.sort((a, b) => (b.time || "").localeCompare(a.time || ""));
+  list.innerHTML = trades
+    .slice(0, 5)
+    .map(
+      (t) => `
+      <div class="list-item">
+        <div>
+          <div>${t.market}</div>
+          <div class="muted">${t.outcome} · ${formatBdc(t.amount)}</div>
+        </div>
+        <span class="badge">${new Date(t.time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+      </div>
+    `
+    )
+    .join("");
+}
+
+/* --- Top agents --- */
+async function loadAgents() {
+  const grid = document.querySelector("[data-agents]");
+  if (!grid) return;
+
   let bots = fallbackBots;
+  let apiBots = [];
   try {
-    const apiBots = await fetchJson("/bots");
+    apiBots = await fetchJson("/bots");
     if (Array.isArray(apiBots) && apiBots.length) {
-      bots = apiBots.slice(0, 3).map((bot) => ({
+      bots = apiBots.slice(0, 8).map((bot) => ({
         name: bot.name,
         status: bot.status,
         reputation: Math.min(1, bot.reputation_score / 2)
@@ -98,44 +207,34 @@ async function loadBots() {
     console.warn("Bots fallback", error);
   }
 
-  list.innerHTML = bots
+  grid.innerHTML = bots
     .map(
       (bot) => `
-      <div class="list-item">
-        <span>${bot.name}</span>
-        <span class="badge ${bot.status === "active" ? "success" : bot.status === "paused" ? "warning" : "danger"}">
-          ${bot.status}
-        </span>
+      <div class="agent-card">
+        <div class="agent-name">${bot.name}</div>
+        <div class="agent-meta">
+          <span class="badge ${bot.status === "active" ? "success" : bot.status === "paused" ? "warning" : "danger"}">${bot.status}</span>
+        </div>
+        <div class="agent-reputation">
+          <span style="width: ${Math.round(bot.reputation * 100)}%"></span>
+        </div>
       </div>
     `
     )
     .join("");
 
-  const reputation = document.querySelector("[data-reputation]");
-  if (reputation) {
-    const avg = bots.reduce((sum, bot) => sum + bot.reputation, 0) / bots.length;
-    reputation.style.width = `${Math.round(avg * 100)}%`;
-  }
+  return apiBots;
 }
 
-function initOnboardingTabs() {
-  const tabs = document.querySelectorAll("[data-tab]");
-  const contents = document.querySelectorAll("[data-tab-content]");
-  tabs.forEach((tab) => {
-    tab.addEventListener("click", () => {
-      tabs.forEach((t) => t.classList.remove("active"));
-      tab.classList.add("active");
-      contents.forEach((c) => {
-        c.classList.toggle("hidden", c.dataset.tabContent !== tab.dataset.tab);
-      });
-    });
-  });
-}
-
-function boot() {
-  loadMarkets();
-  loadBots();
+/* --- Boot --- */
+async function boot() {
+  initRoleSelector();
   initOnboardingTabs();
+
+  const [apiMarkets, apiBots] = await Promise.all([loadMarkets(), loadAgents()]);
+
+  loadStats(apiMarkets || [], apiBots || []);
+  loadRecentTrades(apiMarkets);
 }
 
 document.addEventListener("DOMContentLoaded", boot);
