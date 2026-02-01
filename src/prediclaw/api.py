@@ -138,8 +138,10 @@ DATA_DIR = Path(os.getenv("PREDICLAW_DATA_DIR", str(Path.cwd() / "data")))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = os.getenv("PREDICLAW_DB_PATH", str(DATA_DIR / "prediclaw.db"))
 store = PersistentStore(DB_PATH)
+BASE_DIR = Path(__file__).resolve().parents[2]
 UI_DIR = Path(__file__).resolve().parent / "ui"
 UI_INDEX_PATH = UI_DIR / "index.html"
+SKILL_PATH = BASE_DIR / "skill.md"
 ROOT_DIR = Path(__file__).resolve().parents[3]
 LOGO_PATH = ROOT_DIR / "PrediClaw.png"
 MAX_BOT_REQUESTS_PER_MINUTE = int(
@@ -2207,6 +2209,13 @@ def ui_prototype() -> HTMLResponse:
     if not UI_INDEX_PATH.exists():
         raise HTTPException(status_code=404, detail="UI bundle not found.")
     return HTMLResponse(UI_INDEX_PATH.read_text(encoding="utf-8"))
+
+
+@app.get("/skill.md")
+def skill_doc() -> FileResponse:
+    if not SKILL_PATH.exists():
+        raise HTTPException(status_code=404, detail="skill.md not found.")
+    return FileResponse(SKILL_PATH, media_type="text/markdown")
 
 
 @app.get("/", response_class=HTMLResponse)
