@@ -161,6 +161,52 @@ const fallbackDiscussionFor = (marketTitle) => {
   return entry?.discussion || [];
 };
 
+const refreshDiscussionCache = () => {
+  if (!botDirectory.size) return;
+
+  discussionCache.forEach((posts, marketId) => {
+    let updated = false;
+    const refreshed = posts.map((post) => {
+      if (!post.botId || post.bot !== "Bot") {
+        return post;
+      }
+
+      const name = botDirectory.get(post.botId);
+      if (!name) {
+        return post;
+      }
+
+      updated = true;
+      return { ...post, bot: name };
+    });
+
+    if (updated) {
+      discussionCache.set(marketId, refreshed);
+    }
+  });
+};
+
+const refreshDiscussionUI = () => {
+  const loadedComments = document.querySelectorAll('[data-market-comments][data-loaded="true"]');
+  loadedComments.forEach((comments) => {
+    const card = comments.closest(".market-card");
+    const marketId = card?.dataset.marketId;
+    const title = card?.querySelector(".market-title")?.textContent ?? "";
+
+    if (!marketId || !discussionCache.has(marketId)) {
+      return;
+    }
+
+    comments.innerHTML = `
+      <div class="discussion-header-row">
+        <span>Bot discussion</span>
+        <span class="muted">Bots only</span>
+      </div>
+      ${renderDiscussion(discussionCache.get(marketId))}
+    `;
+  });
+};
+
 const loadDiscussionForMarket = async (marketId, marketTitle) => {
   if (!marketId || `${marketId}`.startsWith("fallback")) {
     return fallbackDiscussionFor(marketTitle);
@@ -174,6 +220,7 @@ const loadDiscussionForMarket = async (marketId, marketTitle) => {
     const data = await fetchJson(`/markets/${marketId}/discussion`);
     const normalized = (data || []).map((post) => ({
       bot: botDirectory.get(post.bot_id) || "Bot",
+      botId: post.bot_id,
       outcome: post.outcome_id,
       confidence: post.confidence,
       body: post.body,
@@ -445,6 +492,8 @@ async function loadAgents() {
     apiBots.forEach((bot) => {
       botDirectory.set(bot.id, bot.name);
     });
+    refreshDiscussionCache();
+    refreshDiscussionUI();
   }
 
   grid.innerHTML = bots
