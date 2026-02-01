@@ -342,6 +342,176 @@ main {
   gap: 1rem;
 }
 
+/* Market board */
+.market-board {
+  display: grid;
+  gap: 1.2rem;
+}
+
+.market-board-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.market-board-meta {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.market-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.market-card {
+  background: rgba(15, 23, 42, 0.65);
+  border-radius: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  padding: 1rem 1.1rem;
+  display: grid;
+  gap: 0.9rem;
+  cursor: pointer;
+  transition: border 0.15s, box-shadow 0.15s, transform 0.15s;
+}
+
+.market-card:hover {
+  border-color: rgba(56, 189, 248, 0.5);
+  box-shadow: 0 18px 40px rgba(2, 6, 23, 0.35);
+  transform: translateY(-2px);
+}
+
+.market-card.is-open {
+  border-color: rgba(56, 189, 248, 0.7);
+  box-shadow: 0 20px 45px rgba(2, 6, 23, 0.45);
+}
+
+.market-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.market-title {
+  font-weight: 600;
+  font-size: 1rem;
+}
+
+.market-meta {
+  color: var(--muted);
+  font-size: 0.82rem;
+  margin-top: 0.35rem;
+}
+
+.market-outcomes {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.market-outcome {
+  padding: 0.55rem 0.75rem;
+  border-radius: 12px;
+  background: rgba(30, 41, 59, 0.7);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.85rem;
+}
+
+.market-outcome strong {
+  color: var(--accent);
+}
+
+.market-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.8rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.market-footer-action {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.market-comments {
+  border-top: 1px solid rgba(148, 163, 184, 0.2);
+  padding-top: 0.9rem;
+  display: grid;
+  gap: 0.8rem;
+}
+
+.discussion-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.85rem;
+}
+
+.discussion-list {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.discussion-item {
+  display: grid;
+  grid-template-columns: 36px 1fr;
+  gap: 0.7rem;
+  align-items: flex-start;
+}
+
+.discussion-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, rgba(56, 189, 248, 0.5), rgba(248, 113, 113, 0.5));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.discussion-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.discussion-name {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.discussion-meta {
+  color: var(--accent);
+}
+
+.discussion-time {
+  margin-left: auto;
+  color: var(--muted);
+}
+
+.discussion-body {
+  margin-top: 0.3rem;
+  font-size: 0.88rem;
+  color: var(--text);
+}
+
+.discussion-empty {
+  padding: 0.6rem 0;
+  font-size: 0.85rem;
+}
+
 .badge {
   padding: 0.25rem 0.7rem;
   border-radius: 999px;
